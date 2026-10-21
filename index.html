@@ -2028,11 +2028,20 @@ function driveBones(e){
 }
 
 // ================= blood on snow, contact shadows =================
-const bloodTex = canvasTex(256, 256, (g, s) => {
-  const r = mulberry32(19); g.clearRect(0, 0, s, s);
-  for (let i = 0; i < 60; i++) { const a = r() * TAU, d = Math.pow(r(), 1.8) * s * 0.36, x = s / 2 + Math.cos(a) * d, y = s / 2 + Math.sin(a) * d, rr = (1 - d / (s * 0.4)) * s * 0.11 * (0.4 + r());
-    const gr = g.createRadialGradient(x, y, 0, x, y, rr); gr.addColorStop(0, 'rgba(98,6,8,0.95)'); gr.addColorStop(0.7, 'rgba(120,10,12,0.85)'); gr.addColorStop(1, 'rgba(150,20,20,0)'); g.fillStyle = gr; g.beginPath(); g.arc(x, y, rr, 0, TAU); g.fill(); }
-  for (let i = 0; i < 70; i++) { const a = r() * TAU, d = s * (0.22 + r() * 0.26), x = s / 2 + Math.cos(a) * d, y = s / 2 + Math.sin(a) * d, rr = 1 + r() * 4; g.fillStyle = 'rgba(110,8,10,0.85)'; g.beginPath(); g.arc(x, y, rr, 0, TAU); g.fill(); }
+const bloodTex = canvasTex(512, 512, (g, s) => {
+  const r = mulberry32(19), c = s / 2; g.clearRect(0, 0, s, s);
+  const blob = (x, y, rr, col) => { g.fillStyle = col; g.beginPath(); g.arc(x, y, rr, 0, TAU); g.fill(); };
+  const at = (dMax, p) => { const a = r() * TAU, d = Math.pow(r(), p) * dMax; return [c + Math.cos(a) * d, c + Math.sin(a) * d, d]; };
+  // pink halo where blood soaks into the snow
+  g.filter = 'blur(12px)'; for (let i = 0; i < 24; i++) { const [x, y] = at(s * 0.2, 1.3); blob(x, y, s * (0.05 + r() * 0.07), 'rgba(170,40,50,0.2)'); }
+  // main irregular body
+  g.filter = 'blur(1.5px)'; for (let i = 0; i < 110; i++) { const [x, y, d] = at(s * 0.24, 1.9); blob(x, y, Math.max(2, (1 - d / (s * 0.27)) * s * 0.07 * (0.4 + r())), 'rgba(' + (105 + r() * 30 | 0) + ',' + (4 + r() * 8 | 0) + ',' + (6 + r() * 6 | 0) + ',0.92)'); }
+  // dark clotted core
+  g.filter = 'blur(7px)'; for (let i = 0; i < 16; i++) { const [x, y] = at(s * 0.1, 2); blob(x, y, s * (0.025 + r() * 0.05), 'rgba(40,1,3,0.5)'); }
+  g.filter = 'none';
+  // radiating spatter streaks and satellite drops
+  for (let i = 0; i < 70; i++) { const a = r() * TAU, d = s * (0.2 + r() * 0.24), x = c + Math.cos(a) * d, y = c + Math.sin(a) * d; g.save(); g.translate(x, y); g.rotate(a); g.fillStyle = 'rgba(' + (95 + r() * 30 | 0) + ',5,8,0.9)'; g.beginPath(); g.ellipse(0, 0, 2 + r() * 11, 1 + r() * 2.6, 0, 0, TAU); g.fill(); g.restore(); }
+  for (let i = 0; i < 140; i++) { const [x, y] = at(s * 0.47, 0.6); blob(x, y, 0.8 + r() * r() * 4, 'rgba(110,6,9,0.88)'); }
 });
 const BLOOD_N = 6000; const C_MIST = new THREE.Color(0.32, 0.012, 0.012);
 const bloodMesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ map: bloodTex, transparent: true, depthWrite: false, roughness: 0.32, metalness: 0, polygonOffset: true, polygonOffsetFactor: -5, polygonOffsetUnits: -5 }), BLOOD_N);
@@ -2048,7 +2057,7 @@ function bloodSpray(at, dir, n){ for (let k = 0; k < n; k++) { const d = 0.5 + r
 function bloodPool(e){ const i = bloodSplat(e.rag ? e.rag.p[RI.Spine1 * 3] : e.pos.x, e.rag ? e.rag.p[RI.Spine1 * 3 + 2] : e.pos.z, 0.01); pools.push({ i, e, t: 0, x: 0, z: 0, s: 3.2 + rand() * 1.8, yaw: rand() * TAU }); }
 // flying droplets: physics arcs that splat where they land
 const DROP_N = 5000, drops = [];
-const dropMesh = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 8, 6), new THREE.MeshPhysicalMaterial({ color: new THREE.Color(0.16, 0.004, 0.005), roughness: 0.12, metalness: 0, clearcoat: 1, clearcoatRoughness: 0.05, envMapIntensity: 1.6 }), DROP_N);
+const dropMesh = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 8, 6), new THREE.MeshPhysicalMaterial({ color: new THREE.Color(0.24, 0.006, 0.01), roughness: 0.12, metalness: 0, clearcoat: 1, clearcoatRoughness: 0.05, envMapIntensity: 1.6 }), DROP_N);
 dropMesh.count = 0; dropMesh.frustumCulled = false; scene.add(dropMesh);
 const _dm = new THREE.Matrix4(), _dq = new THREE.Quaternion(), _ds = V(), _dp = V(), _dv = V();
 function bloodBurst(at, dir, n, power){
@@ -2094,8 +2103,8 @@ const WEAPONS = [
   { id: 'pistol', name: '9 mm · 17-round sidearm', short: 'PISTOL', rate: 0.11, auto: false, pellets: 1, dmg: 1.5, spread: 0.55, cone: 0, cap: 17, recoil: 1.5, zoom: 58, force: 1.3, muzzle: -0.076, muzzleY: -0.002, sightY: 0.0245, adsZ: -0.38, oneHand: true, owned: true },
   { id: 'dmr', name: '7.62 DMR · 4× scope', short: 'DMR', rate: 0.2, auto: false, pellets: 1, dmg: 2.8, spread: 0.18, cone: 0, cap: 20, recoil: 2.3, zoom: 13, force: 2.4, muzzle: -0.68, owned: false },
   { id: 'sniper50', name: '.50 cal · anti-materiel · 12×', short: '.50 CAL', rate: 1.35, auto: false, pellets: 1, dmg: 40, spread: 0.04, cone: 0, cap: 5, recoil: 5, zoom: 6, force: 9, muzzle: -0.745, owned: false, oneshot: true, pen: true },
-  { id: 'rpg', name: '85 mm rocket · HEAT', short: 'RPG', rate: 1.2, auto: false, pellets: 1, dmg: 0, spread: 0, cone: 0, cap: 1, recoil: 0, zoom: 28, force: 1, muzzle: -0.7, owned: false },
-  { id: 'flamer', name: 'Flamethrower · napalm', short: 'FLAMER', rate: 0.05, auto: true, pellets: 1, dmg: 0, spread: 0, cone: 0, cap: 200, recoil: 0, zoom: 72, force: 1, muzzle: -0.648, owned: false, noAds: true }
+  { id: 'flamer', name: 'Flamethrower · napalm', short: 'FLAMER', rate: 0.05, auto: true, pellets: 1, dmg: 0, spread: 0, cone: 0, cap: 200, recoil: 0, zoom: 72, force: 1, muzzle: -0.648, owned: false, noAds: true },
+  { id: 'rpg', name: '85 mm rocket · HEAT', short: 'RPG', rate: 1.2, auto: false, pellets: 1, dmg: 0, spread: 0, cone: 0, cap: 1, recoil: 0, zoom: 28, force: 1, muzzle: -0.7, owned: false }
 ];
 const AMMO = { ciws: { mag: 500, reserve: 3000 }, dmr: { mag: 20, reserve: 60 }, minigun: { mag: 2000, reserve: 6000 }, rpg: { mag: 1, reserve: 6 }, pistol: { mag: 17, reserve: 85 }, sniper50: { mag: 5, reserve: 20 }, flamer: { mag: 200, reserve: 400 } };
 let WPN = WEAPONS[0];
@@ -3063,9 +3072,32 @@ function launchRocket(mz, fwd){
 function rocketHit(r, p, obj){
   if (obj && obj.userData.veh) vehDamage(obj.userData.veh, obj.userData.veh.kind === 'heli' ? 100 : 999, p);
   if (obj && obj.userData.enemy && !obj.userData.enemy.dead) { const e = obj.userData.enemy; hitEnemy(e, obj.userData.part, p.distanceTo(P.pos), r.vel.clone().normalize(), p.clone(), 60, 5); }
-  explode(p.clone(), 'player');
+  rpgNuke(p.clone());
   for (let i = 0; i < 18; i++) puff(p.clone(), C_FIRE, 0.4 + rand() * 0.6, 0.3 + rand() * 0.3, V((rand() - 0.5) * 14, rand() * 10, (rand() - 0.5) * 14), 2, 1, 0.55);
   scene.remove(r.m);
+}
+window.__nuke = p => rpgNuke(p);
+function rpgNuke(p){
+  explode(p, 'player');
+  const R = 20; explLight.intensity = 700; explLight.distance = 140;
+  for (let i = 0; i < 70; i++) puff(p.clone().add(V(0, 0.5, 0)), C_FIRE, 0.8 + rand() * 2, 0.5 + rand() * 0.7, V((rand() - 0.5) * 44, rand() * 28, (rand() - 0.5) * 44), 6, 1, 1);
+  for (let i = 0; i < 40; i++) puff(p.clone().add(V(0, 1, 0)), C_SMOKE, 2 + rand() * 3, 5 + rand() * 5, V((rand() - 0.5) * 9, 3 + rand() * 9, (rand() - 0.5) * 9), -0.4, 0.85, 4.5);
+  for (let i = 0; i < 50; i++) puff(p.clone(), C_SNOW, 1.5 + rand() * 2, 2 + rand() * 2, V((rand() - 0.5) * 34, 4 + rand() * 15, (rand() - 0.5) * 34), 3, 0.9, 2.5);
+  for (let k = 0; k < 3; k++) { const si = scorchI++ % 40; scorchMesh.count = Math.min(scorchI, 40); placeDecal(scorchMesh, si, p.x + (rand() - 0.5) * 4, p.z + (rand() - 0.5) * 4, 8 + rand() * 4, 8 + rand() * 4, rand() * TAU, 0.03 + k * 0.002); }
+  for (const t of treesNear(p.x, p.z, []).slice()) { const d = Math.hypot(t.x - p.x, t.z - p.z); if (d < 16) damageTree(t, 999, V(t.x - p.x, 0, t.z - p.z)); }
+  for (const v of VEH) if (v.alive && v.pos.distanceTo(p) < 25) vehDamage(v, 999);
+  if (HELI.alive && HELI.pos.distanceTo(p) < 30) vehDamage(HELI, 999);
+  for (const e of enemies) {
+    const c = V(e.pos.x, e.pos.y + 0.9, e.pos.z); if (e.rag) ragPos(e.rag, RI.Hips, c);
+    const d = c.distanceTo(p); if (d > R + 8) continue;
+    const dir = c.clone().sub(p); dir.y = Math.max(dir.y, 0) + 0.8 * dir.length(); dir.normalize();
+    if (!e.dead && d < R) hitEnemy(e, d < 6 ? 'head' : 'body', c.distanceTo(P.pos), dir, c, 999, 8, { ap: true, oneshot: true });
+    if (e.rag) for (const n of [RI.Hips, RI.Spine1, RI.Neck, RI.LeftLeg, RI.RightLeg]) ragImpulse(e.rag, ragPos(e.rag, n, V()), dir, 80 * (1 - d / (R + 8)));
+    if (d < R) { bloodBurst(c, dir, 70, 10); bloodSpray(c, dir, 14); }
+  }
+  const d0 = p.distanceTo(P.pos), k = clamp(1 - d0 / 90, 0, 1);
+  P.shakeX += (rand() - 0.5) * 0.45 * k; P.shakeY += (rand() - 0.5) * 0.45 * k; P.roll += (rand() - 0.5) * 0.5 * k;
+  if (state === 'playing' && d0 < 16) { if (typeof SB !== 'undefined') SB.hurt = true; damagePlayer(d0 < 10 ? 999 : 170 * (1 - (d0 - 10) / 6), Math.atan2(-(p.x - P.pos.x), -(p.z - P.pos.z)) - P.yaw); if (typeof SB !== 'undefined') SB.hurt = false; }
 }
 function updateRockets(dt){
   for (let i = rockets.length - 1; i >= 0; i--) {
@@ -4604,7 +4636,7 @@ const sbWalls = [], sbCovers = [];
 { const h0 = heightAt; heightAt = (x, z) => SB.on && sbIn(x, z, 0.6) ? SB.y : h0(x, z); }
 { const t0 = treesNear; treesNear = (x, z, out) => { if (SB.on && sbIn(x, z, 8)) { out.length = 0; return out; } return t0(x, z, out); }; }
 { const r0 = rayTrees; rayTrees = (o, d, maxT, f) => SB.on && sbIn(o.x, o.z, 2) ? maxT : r0(o, d, maxT, f); }
-{ const d0 = damagePlayer; damagePlayer = (d, rel) => { if (!SB.on) d0(d, rel); }; }
+{ const d0 = damagePlayer; damagePlayer = (d, rel) => { if (!SB.on || SB.hurt) d0(d, rel); }; }
 { const u0 = updateEnemy; updateEnemy = (e, dt) => { if (SB.on && !e.dead) { e.fireT = 9; e.burst = 0; e.nadeT = 9; } u0(e, dt); }; }
 { const s0 = startWave; startWave = n => { if (SB.on) sbStart(); else s0(n); }; }
 { const w0 = updateWaves; updateWaves = dt => { if (SB.on) sbUpdate(dt); else w0(dt); }; }
@@ -4634,7 +4666,7 @@ function sbStart(){
   banner('Sandbox', 'All weapons · unlimited ammo · 3 axes');
 }
 function sbUpdate(dt){
-  P.hp = 100; nadeCount = 6;
+  if (state === 'playing') P.hp = 100; nadeCount = 6;
   P.reserve = Math.max(P.reserve, WPN.cap * 4);
   for (const w of WEAPONS) if (AMMO[w.id] && w !== WPN) AMMO[w.id].reserve = Math.max(AMMO[w.id].reserve, w.cap * 4);
   if (SBR.resetT > 0) { SBR.resetT -= dt; if (SBR.resetT <= 0) { clearCorpses(); sbLine(); banner('Targets reset', 'Axes returned'); } }
