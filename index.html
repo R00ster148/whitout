@@ -880,7 +880,7 @@ function updateSnow(dt, t){
 const puffs = [];
 for (let i = 0; i < 400; i++) { const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: puffTex, transparent: true, depthWrite: false })); s.visible = false; scene.add(s); puffs.push({ s, t: 0, life: 1, size: 1, vel: V(), grav: 0, grow: 1.3, a: 0.9 }); }
 let puffI = 0;
-function puff(p, color, size, life, vel, grav, alpha, grow){ const q = puffs[puffI++ % puffs.length]; q.s.position.copy(p); q.s.material.color.copy(color.isColor ? color : new THREE.Color(color)); q.s.material.rotation = rand() * TAU; q.s.visible = true; q.t = 0; q.life = life; q.size = size; q.vel.copy(vel || V()); q.grav = grav || 0; q.a = alpha == null ? 0.9 : alpha; q.grow = grow == null ? 1.3 : grow; }
+function puff(p, color, size, life, vel, grav, alpha, grow){ const q = puffs[puffI++ % puffs.length]; q.s.position.copy(p); q.s.material.color.copy(color.isColor ? color : new THREE.Color(color)); if (NIGHT.amt > 0.01 && q.s.material.color.r < 2.5) q.s.material.color.multiplyScalar(1 - NIGHT.amt * (FL.on ? 0.7 : 0.85)); q.s.material.rotation = rand() * TAU; q.s.visible = true; q.t = 0; q.life = life; q.size = size; q.vel.copy(vel || V()); q.grav = grav || 0; q.a = alpha == null ? 0.9 : alpha; q.grow = grow == null ? 1.3 : grow; }
 const C_SNOW = new THREE.Color(1.1, 1.12, 1.18), C_HIT = new THREE.Color(0.13, 0.006, 0.006), C_DUST = new THREE.Color(0.35, 0.35, 0.36), C_WOOD = new THREE.Color(0.18, 0.12, 0.08), C_SPARK = new THREE.Color(9, 5, 1.5), C_BREATH = new THREE.Color(1.3, 1.35, 1.42);
 function snowHit(p, n){
   for (let i = 0; i < 3; i++) puff(p, C_SNOW, 0.45 + rand() * 0.4, 0.8 + rand() * 0.6, V((rand()-0.5)*0.8 + (n?n.x:0)*1.2, 0.6 + rand()*1.2, (rand()-0.5)*0.8 + (n?n.z:0)*1.2), 1.2);
@@ -3602,7 +3602,7 @@ const _wBase = { fill: wFill.intensity, key: wKey.intensity, rim: wRim.intensity
 const FL = { on: false, light: new THREE.SpotLight(0xfff1dc, 0, 70, 0.4, 0.55, 1.6) };
 scene.add(FL.light, FL.light.target);
 const flares = [0, 1].map(() => {
-  const light = new THREE.PointLight(0xffd9c2, 0, 150, 1.6); scene.add(light);
+  const light = new THREE.PointLight(0xffd9c2, 0, 120, 1.4); scene.add(light);
   const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: flashTex, color: new THREE.Color(12, 9, 7), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false }));
   spr.scale.setScalar(2.2); spr.visible = false; scene.add(spr);
   return { light, spr, on: false, pos: V(), vy: 0, t: 0 };
@@ -3631,29 +3631,26 @@ function updateNight(dt){
   sun.intensity *= lit; sun.color.copy(_sunDay).lerp(MOON_COL, n);
   hemi.intensity = hemi.intensity * (1 - 0.6 * n); hemi.color.copy(_hemiSky).lerp(MOON_COL, n * 0.8); hemi.groundColor.copy(_hemiGnd).multiplyScalar(1 - 0.8 * n);
   scene.fog.color.copy(_fogDay).lerp(NIGHT_FOG, n); skyUniforms.night.value = n;
+  // falling snow and drift aren't lit by anything, so dim them at night (a little brighter when the torch catches them)
+  const sb = 1.25 * (1 - n * (FL.on ? 0.72 : 0.9)); snowMatP.uniforms.bright.value = sb; driftMat.uniforms.bright.value = sb;
   wFill.intensity = _wBase.fill * (1 - 0.75 * n) + (FL.on ? 0.25 * n : 0); wKey.intensity = _wBase.key * (1 - 0.85 * n); wRim.intensity = _wBase.rim * (1 - 0.9 * n);
   // reflections from the daytime sky are the biggest light source on snow, so scale them too
   NIGHT.matsT -= dt; if (!NIGHT.mats || NIGHT.matsT <= 0) { NIGHT.mats = nightMaterials(); NIGHT.matsT = 2; }
   const env = 1 - 0.9 * n;
   for (const m of NIGHT.mats) { if (m.userData.env0 === undefined) m.userData.env0 = m.envMapIntensity; m.envMapIntensity = m.userData.env0 * env; }
   // flashlight rides on the camera
-  const fl = FL.light; fl.intensity = FL.on && state !== 'menu' ? 26 * Math.max(n, 0.15) : 0;
+  const fl = FL.light; fl.intensity = FL.on && state !== 'menu' ? 18 * Math.max(n, 0.15) : 0;
   if (fl.intensity > 0) { camera.updateMatrixWorld(); fl.position.copy(camera.position).add(V(0.12, -0.12, 0).applyQuaternion(camera.quaternion)); fl.target.position.copy(camera.position).add(V(0, 0, -20).applyQuaternion(camera.quaternion)); fl.target.updateMatrixWorld(); }
   // enemies see less in the dark, unless you light yourself up or a flare is burning
-  const flareLit = flares.some(f => f.on && f.t > 1.2);
+  const flareLit = false;
   NIGHT.vis = flareLit ? 1 : 1 - n * (FL.on ? 0.05 : 0.55);
-  // flares: enemies in a fight put one up every so often
-  if (n > 0.6 && state === 'playing') {
-    NIGHT.flareT -= dt;
-    if (NIGHT.flareT <= 0) { NIGHT.flareT = 13 + rand() * 9; const e = enemies.find(e => !e.dead && e.state === 'combat') || enemies.find(e => !e.dead); if (e) launchFlare(e.pos); }
-  }
   for (const f of flares) {
     if (!f.on) continue;
     f.t += dt;
     if (f.vy > -2.2) f.vy = Math.max(f.vy - 22 * dt, -2.2);
     f.pos.y += f.vy * dt;
     const burn = f.t > 1.2 ? 1 : 0, fade = f.t > 22 ? Math.max(0, 1 - (f.t - 22) / 2) : 1;
-    f.light.position.copy(f.pos); f.light.intensity = burn * fade * (380 + Math.sin(f.t * 31) * 40 + Math.sin(f.t * 13) * 60);
+    f.light.position.copy(f.pos); f.light.intensity = burn * fade * (4.5 + Math.sin(f.t * 31) * 0.5 + Math.sin(f.t * 13) * 0.8);
     f.spr.visible = burn > 0 && fade > 0; f.spr.position.copy(f.pos); f.spr.scale.setScalar(1.8 + Math.sin(f.t * 40) * 0.25);
     if (rand() < dt * 20) puff(f.pos.clone(), C_SMOKE, 0.35 + rand() * 0.3, 3, V((rand() - 0.5) * 0.4, 0.6, (rand() - 0.5) * 0.4), -0.05, 0.4, 4);
     if (f.t < 1.2 && rand() < dt * 40) puff(f.pos.clone(), C_FIRE, 0.12, 0.25, V(0, -2, 0), 0, 1, 0.3);
@@ -3719,12 +3716,13 @@ const axeWood = new THREE.MeshStandardMaterial({ color: lin(0x5a3a22), roughness
 const axeHeadGeo = (() => { const s = new THREE.Shape(); s.moveTo(-0.02, -0.025); s.lineTo(0.03, -0.022); s.quadraticCurveTo(0.075, -0.05, 0.11, -0.075); s.lineTo(0.115, 0.06); s.quadraticCurveTo(0.075, 0.035, 0.03, 0.022); s.lineTo(-0.02, 0.025); s.lineTo(-0.035, 0.0); s.closePath();
   const g = new THREE.ExtrudeGeometry(s, { depth: 0.014, bevelEnabled: true, bevelSize: 0.004, bevelThickness: 0.004, bevelSegments: 2 }); g.translate(0, 0, -0.007); g.computeVertexNormals(); return g; })();
 function makeAxe(){
-  const g = new THREE.Group();
+  // the model is built blade-along-x; turn it so the blade leads (-z) and it spins end over end around x
+  const outer = new THREE.Group(), g = new THREE.Group(); g.rotation.y = Math.PI / 2; outer.add(g);
   const h = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.017, 0.46, 10), axeWood); h.position.y = -0.18; g.add(h);
   const head = new THREE.Mesh(axeHeadGeo, axeSteel); head.position.set(0.0, 0.04, 0); g.add(head);
   const edge = new THREE.Mesh(new THREE.BoxGeometry(0.006, 0.13, 0.016), axeEdge); edge.position.set(0.113, 0.033, 0); g.add(edge);
   g.traverse(o => { if (o.isMesh) o.castShadow = true; });
-  return g;
+  return outer;
 }
 function throwAxe(){
   if (state !== 'playing' || AXE.count <= 0 || WS.mode === 'glide') return;
@@ -3774,7 +3772,7 @@ function updateAxes(dt){
         const p = pt || _ax.o.clone().addScaledVector(_ax.d, Math.min(best, step));
         a.flying = false; a.g.position.copy(p).addScaledVector(_ax.d, -0.06);
         // blade in first: line the axe up with its flight
-        a.g.lookAt(p.clone().add(_ax.d)); a.g.rotateX(-Math.PI / 2 + 0.3);
+        a.g.lookAt(p.clone().sub(_ax.d)); a.g.rotateX(0.5);
         const e = he;
         if (e) {
           const part = hpart, dmg = part === 'head' ? 9 : 7.5;
@@ -4575,6 +4573,87 @@ Promise.all([loadSoldier(), GLOVE_CACHE_P]).then(([g, gc]) => { GLOVE_CACHE = gc
   buildGloves();
   playBtn.disabled = false; playBtn.textContent = 'Deploy';
 });
+// ================= sandbox: walled firing range with lined-up targets =================
+const SB = { on: false, x: 0, z: 0, hw: 14, hl: 45, y: 0 };
+{ let m = -1e9; for (let i = 0; i < HG.length; i++) if (HG[i] > m) m = HG[i]; SB.y = m + 45; }
+const sbIn = (x, z, pad) => Math.abs(x - SB.x) < SB.hw + pad && Math.abs(z - SB.z) < SB.hl + pad;
+const sbGroup = new THREE.Group(); sbGroup.visible = false; scene.add(sbGroup);
+const sbWalls = [], sbCovers = [];
+{
+  const floorTex = canvasTex(256, 256, g => {
+    g.fillStyle = '#8f98a3'; g.fillRect(0, 0, 256, 256);
+    g.strokeStyle = 'rgba(30,36,46,0.5)'; g.lineWidth = 3; g.strokeRect(0, 0, 256, 256);
+  }, true);
+  floorTex.wrapS = floorTex.wrapT = THREE.RepeatWrapping; floorTex.repeat.set(SB.hw / 2, SB.hl / 2);
+  const floor = new THREE.Mesh(new THREE.BoxGeometry(SB.hw * 2 + 2, 1, SB.hl * 2 + 2), new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.9 }));
+  floor.position.set(SB.x, SB.y - 0.5, SB.z); floor.receiveShadow = true; sbGroup.add(floor);
+  const H = 6, T = 1, wMat = new THREE.MeshStandardMaterial({ color: lin(0xbfc6ce), roughness: 0.9 });
+  const wall = (x, z, w, d) => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, H, d), wMat);
+    m.position.set(x, SB.y + H / 2, z); m.receiveShadow = m.castShadow = true; sbGroup.add(m); sbWalls.push(m);
+    sbCovers.push({ x, z, hx: w / 2, hz: d / 2, y0: SB.y, top: SB.y + H });
+  };
+  wall(SB.x, SB.z - SB.hl - T / 2, SB.hw * 2 + T * 2, T);
+  wall(SB.x, SB.z + SB.hl + T / 2, SB.hw * 2 + T * 2, T);
+  wall(SB.x - SB.hw - T / 2, SB.z, T, SB.hl * 2);
+  wall(SB.x + SB.hw + T / 2, SB.z, T, SB.hl * 2);
+  const line = new THREE.Mesh(new THREE.PlaneGeometry(SB.hw * 2, 0.3).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: lin(0xd8a320), roughness: 0.8 }));
+  line.position.set(SB.x, SB.y + 0.01, SB.z + 34); sbGroup.add(line);
+}
+// world hooks: flat floor inside the box, no trees in the way
+{ const h0 = heightAt; heightAt = (x, z) => SB.on && sbIn(x, z, 0.6) ? SB.y : h0(x, z); }
+{ const t0 = treesNear; treesNear = (x, z, out) => { if (SB.on && sbIn(x, z, 8)) { out.length = 0; return out; } return t0(x, z, out); }; }
+{ const r0 = rayTrees; rayTrees = (o, d, maxT, f) => SB.on && sbIn(o.x, o.z, 2) ? maxT : r0(o, d, maxT, f); }
+{ const d0 = damagePlayer; damagePlayer = (d, rel) => { if (!SB.on) d0(d, rel); }; }
+{ const u0 = updateEnemy; updateEnemy = (e, dt) => { if (SB.on && !e.dead) { e.fireT = 9; e.burst = 0; e.nadeT = 9; } u0(e, dt); }; }
+{ const s0 = startWave; startWave = n => { if (SB.on) sbStart(); else s0(n); }; }
+{ const w0 = updateWaves; updateWaves = dt => { if (SB.on) sbUpdate(dt); else w0(dt); }; }
+function sbApply(){
+  sbGroup.visible = SB.on;
+  for (const m of sbWalls) { const i = coverMeshes.indexOf(m); if (SB.on && i < 0) coverMeshes.push(m); if (!SB.on && i >= 0) coverMeshes.splice(i, 1); }
+  for (const c of sbCovers) { const i = covers.indexOf(c); if (SB.on && i < 0) covers.push(c); if (!SB.on && i >= 0) covers.splice(i, 1); }
+  $('sbQuit').hidden = !SB.on;
+}
+const SBR = { resetT: 0, rows: ['rifle', 'heavy', 'rusher', 'rifle', 'heavy', 'rifle', 'rusher', 'heavy', 'rifle', 'rifle'] };
+function sbLine(){
+  const n = SBR.rows.length;
+  for (let i = 0; i < n; i++) {
+    forceType = SBR.rows[i]; let e; try { e = spawnEnemy(); } finally { forceType = null; }
+    e.pos.set(SB.x - (n - 1) * 1.4 + i * 2.8, SB.y, SB.z + 8 - (i % 2) * 5);
+    e.yaw = 0; e.T = Object.assign({}, e.T, { spd: 0 }); e.perch = null; e.prone = false;
+    e.state = 'combat'; e.aware = 1; e.lastSeen.copy(P.pos);
+  }
+}
+function sbStart(){
+  sbApply(); if (crate) { scene.remove(crate.g); crate = null; }
+  wave = 1; bz = bzTarget = 0; setNightTarget(0);
+  P.pos.set(SB.x, SB.y, SB.z + 38); P.vel.set(0, 0, 0); P.yaw = 0; P.pitch = 0;
+  WEAPONS.forEach(w => { w.owned = true; AMMO[w.id] = { mag: w.cap, reserve: w.cap * 4 }; });
+  P.mag = WPN.cap; P.reserve = WPN.cap * 4;
+  sbLine();
+  banner('Sandbox', 'All weapons · unlimited ammo · 3 axes');
+}
+function sbUpdate(dt){
+  P.hp = 100; nadeCount = 6;
+  P.reserve = Math.max(P.reserve, WPN.cap * 4);
+  for (const w of WEAPONS) if (AMMO[w.id] && w !== WPN) AMMO[w.id].reserve = Math.max(AMMO[w.id].reserve, w.cap * 4);
+  if (SBR.resetT > 0) { SBR.resetT -= dt; if (SBR.resetT <= 0) { clearCorpses(); sbLine(); banner('Targets reset', 'Axes returned'); } }
+  else if (alive() === 0) { SBR.resetT = 4; startKillCam(); }
+}
+// menu wiring (capture phase so SB is set before the normal handlers run)
+{
+  const sb = document.createElement('button'); sb.className = 'btn ghost'; sb.id = 'sbBtn'; sb.textContent = 'Sandbox';
+  $('play').parentNode.insertBefore(sb, $('cont'));
+  const q = document.createElement('button'); q.className = 'btn ghost'; q.id = 'sbQuit'; q.textContent = 'Main menu'; q.hidden = true;
+  $('restart').parentNode.appendChild(q);
+  document.addEventListener('click', ev => {
+    const id = ev.target && ev.target.id;
+    if (id === 'play' || id === 'cont' || id === 'cont2') { SB.on = false; sbApply(); }
+    if (id === 'sbBtn') { SB.on = true; SBR.resetT = 0; sbApply(); enterPlay(true); }
+    if (id === 'sbQuit') { SB.on = false; sbApply(); resetGame(); state = 'menu'; showPanel('pMain'); refreshContinue(); }
+  }, true);
+}
+
 window.__WO = { setPose(x, z, yaw, pitch){ P.pos.set(x, heightAt(x, z), z); P.yaw = yaw; P.pitch = pitch; }, spawn(n){ for (let i = 0; i < n; i++) spawnEnemy(); }, enemies, P, get state(){ return state; }, info(){ return renderer.info.render; }, GRIP, feat(){ return { raycaster, enemyParts, coverMeshes, rayTerrain, NIGHT, setNightTarget, FL, AXE, throwAxe, FIRE, NET, TH, WS, cycleThermal, FUN, barrels, damageBarrel, loot, get keys(){ return keys; }, heightAt, get trailCount(){ return trailMesh.count; }, rockets, ragImpulse, RI, spawnSled, spawnHeli, HELI, VEH, vehDamage, SM, fellTree, trees, KC, fallen, startKillCam, smToggle, get lastKill(){ return lastKill; }, startWave, WEAPONS, setWeapon, spawnCrate, explode, applyWeaponLook, setBz(v){ bz = bzTarget = v; }, setWave(n){ wave = n; } }; }, fpInfo(){ return fp ? { tris: fp.tris, ms: fp.ms } : null; }, gun, kill(i, part){ const e = enemies[i]; if (!e) return; const at = V(); e.bones[part === 'head' ? 'Head' : part === 'leg' ? 'LeftLeg' : 'Spine2'].getWorldPosition(at); const dir = at.clone().sub(camera.position).normalize(); e.hp = 1; hitEnemy(e, part, at.distanceTo(camera.position), dir, at); }, step(n, d){ for (let i = 0; i < n; i++) loop(d || 0.033); } };
 loop();
 })();
