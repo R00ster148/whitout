@@ -103,7 +103,7 @@ h2{margin:0;font:800 clamp(52px,9vw,92px)/.9 var(--f-display);text-transform:upp
 .stats div{display:flex;flex-direction:column;gap:6px}
 .stats span{font:500 10px/1 var(--f-mono);letter-spacing:.14em;text-transform:uppercase;color:var(--frost)}
 .stats b{font:700 40px/1 var(--f-display);font-variant-numeric:tabular-nums}
-#loading{position:fixed;left:50%;bottom:40px;transform:translateX(-50%);font:500 11px/1 var(--f-mono);letter-spacing:.14em;text-transform:uppercase;color:var(--frost)}
+#loading{position:fixed;inset:0;z-index:50;display:flex;flex-direction:column;gap:22px;align-items:center;justify-content:center;background:var(--night);font:500 12px/1 var(--f-mono);letter-spacing:.16em;text-transform:uppercase;color:var(--frost);transition:opacity .5s}#loading::before{content:'';width:34px;height:34px;border-radius:50%;border:2px solid rgba(183,196,208,.2);border-top-color:var(--blaze);animation:ldSpin .8s linear infinite;will-change:transform}#loading.out{opacity:0;pointer-events:none}@keyframes ldSpin{to{transform:rotate(360deg)}}
 @media (max-width:640px){.env{display:none}.stats{grid-template-columns:repeat(2,auto)}#mag{font-size:48px}.bl{min-width:160px}}
 @media (prefers-reduced-motion:reduce){#banner,#feed div{transition:none}}
 </style>
@@ -218,13 +218,13 @@ function tfbm(x, y, p, o){let s=0,a=0.5,n=0;for(let i=0;i<o;i++){s+=a*tnoise(x,y
 
 // ================= quality =================
 const QUALITY = {
-  low:    { pr: 0.75, shadow: 1024, msaa: 0, rays: false, snow: 0.5, bloom: 0.5 },
-  medium: { pr: 1.0,  shadow: 2048, msaa: 2, rays: true,  snow: 0.75, bloom: 0.5 },
-  high:   { pr: 1.0,  shadow: 4096, msaa: 4, rays: true,  snow: 1.0, bloom: 1 },
+  low:    { pr: 0.6,  shadow: 1024, msaa: 0, rays: false, snow: 0.3, bloom: 0.3 },
+  medium: { pr: 0.85, shadow: 2048, msaa: 0, rays: true,  snow: 0.55, bloom: 0.4 },
+  high:   { pr: 1.0,  shadow: 2048, msaa: 2, rays: true,  snow: 0.85, bloom: 0.6 },
   ultra:  { pr: 1.5,  shadow: 4096, msaa: 4, rays: true,  snow: 1.0, bloom: 1 }
 };
-let qName = 'high';
-try { const s = localStorage.getItem('whiteout-quality'); if (s && QUALITY[s]) qName = s; } catch (e) {}
+let qName = 'medium';
+try { const s = localStorage.getItem('whiteout-q2'); if (s && QUALITY[s]) qName = s; } catch (e) {}
 let Q = QUALITY[qName];
 
 // ================= renderer =================
@@ -233,7 +233,7 @@ const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPrefer
 const isW2 = renderer.capabilities.isWebGL2;
 renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.type = qName === 'ultra' || qName === 'high' ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap;
 renderer.toneMapping = THREE.NoToneMapping; // tone mapping happens in the final pass
 renderer.outputEncoding = THREE.LinearEncoding;
 renderer.setClearColor(0x000000, 0);
@@ -812,7 +812,7 @@ function makeSnowMaterial(sizeMul, alpha){
       void main(){
         vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
         float d = -mvPosition.z;
-        gl_PointSize = clamp(size * ${sizeMul.toFixed(2)} * scale / d, 1.0, 90.0);
+        gl_PointSize = clamp(size * ${sizeMul.toFixed(2)} * scale / d, 1.0, 40.0);
         vA = smoothstep(0.12, 1.4, d) * clamp(gl_PointSize / 2.0, 0.3, 1.0);
         gl_Position = projectionMatrix * mvPosition;
         #include <fog_vertex>
@@ -1688,7 +1688,7 @@ function leftMagPose(cuffDir){
   const mids = [fpt(fr, 0.02, 150, 0.019), fpt(fr, 0.038, 148, 0.019), fpt(fr, 0.056, 143, 0.019), fpt(fr, 0.073, 140, 0.018)];
   return assembleHand(fr, mcps, J, radii, thumb, bases, mids, fpt(fr, 0.089, 178, 0.029), cuffDir);
 }
-function sculptGlove(H, h = 0.0016){
+function sculptGlove(H, h = 0.002){
   const box = new THREE.Box3(); const ps = allPrims(H);
   for (const p of ps) { if (p.k === 0) { const r = Math.max(p.r1, p.r2); box.expandByPoint(p.a.clone().addScalar(-r)); box.expandByPoint(p.a.clone().addScalar(r)); box.expandByPoint(p.b.clone().addScalar(-r)); box.expandByPoint(p.b.clone().addScalar(r)); } else { const r = Math.max(p.hx, p.hy, p.hz) * 1.8; box.expandByPoint(p.c.clone().addScalar(-r)); box.expandByPoint(p.c.clone().addScalar(r)); } }
   box.expandByScalar(0.004);
@@ -4425,7 +4425,7 @@ function buildComposer(){
 }
 function setQuality(name){
   qName = name; Q = QUALITY[name];
-  try { localStorage.setItem('whiteout-quality', name); } catch (e) {}
+  try { localStorage.setItem('whiteout-q2', name); } catch (e) {}
   document.querySelectorAll('.qbtn').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.q === name)));
   buildComposer();
 }
@@ -4539,9 +4539,15 @@ setQuality(qName);
 let hurtSmooth = 0;
 const _sunSnap = V(), _lr = V(), _lu = V();
 _lr.crossVectors(YAX, SUN_DIR).normalize(); _lu.crossVectors(SUN_DIR, _lr).normalize();
+const AQ = { t: 0, n: 0, drops: 0 };
 function loop(fixedDt){
   if (!window.__WO_MANUAL) requestAnimationFrame(loop);
   const rdt = typeof fixedDt === 'number' && window.__WO_MANUAL ? fixedDt : Math.min(clock.getDelta(), 0.05), dt = state === 'killcam' ? rdt * 0.2 : rdt; time += dt; shaderTime.value = time; skyUniforms.time.value = time;
+  if (state === 'playing' && !window.__WO_MANUAL) {
+    AQ.t += rdt; AQ.n++;
+    if (AQ.t > 4) { const fps = AQ.n / AQ.t; AQ.t = 0; AQ.n = 0;
+      if (fps < 42 && AQ.drops < 3) { const order = ['ultra', 'high', 'medium', 'low']; const i = order.indexOf(qName); if (i >= 0 && i < 3) { AQ.drops++; setQuality(order[i + 1]); feed('Graphics lowered to <b>' + order[i + 1] + '</b><span>' + Math.round(fps) + ' fps</span>'); } } }
+  }
   if (state === 'playing') {
     updatePlayer(dt);
     updateEnemiesNet(dt);
@@ -4588,8 +4594,7 @@ function loadSoldier(){
 }
 const playBtn = $('play'); playBtn.disabled = true; playBtn.textContent = 'Loading…';
 Promise.all([loadSoldier(), GLOVE_CACHE_P]).then(([g, gc]) => { GLOVE_CACHE = gc;
-  $('loading').remove();
-  if (!g) { $('lockNote').textContent = 'The soldier models failed to load. Reload the page to try again.'; playBtn.textContent = 'Unavailable'; return; }
+  if (!g) { $('loading').remove(); $('lockNote').textContent = 'The soldier models failed to load. Reload the page to try again.'; playBtn.textContent = 'Unavailable'; return; }
   let bodySrc = null;
   g.scene.traverse(o => { if (o.isSkinnedMesh) { if (o.name.indexOf('visor') < 0) bodySrc = o.material; o.geometry.computeBoundingSphere(); o.geometry.boundingSphere.radius *= 1.6; } });
   for (const a of g.animations) SOLDIER_CLIPS[a.name] = a;
@@ -4602,8 +4607,16 @@ Promise.all([loadSoldier(), GLOVE_CACHE_P]).then(([g, gc]) => { GLOVE_CACHE = gc
   soldierAsset = { scene: g.scene, bodySrc };
   soldierMat = makeSoldierMaterial(bodySrc, false);
   soldierVisorMat = new THREE.MeshStandardMaterial({ color: lin(0x0b0d10), roughness: 0.1, metalness: 0.9, skinning: true, envMapIntensity: 1.6 });
-  buildGloves();
-  playBtn.disabled = false; playBtn.textContent = 'Deploy';
+  const ld = $('loading'); ld.textContent = gc ? 'Unpacking kit…' : 'Fitting gloves · first load only…';
+  setTimeout(() => {
+    buildGloves();
+    ld.textContent = 'Warming up shaders…';
+    setTimeout(() => {
+      try { renderer.compile(scene, camera); renderer.compile(wScene, wCam); } catch (e) {}
+      playBtn.disabled = false; playBtn.textContent = 'Deploy';
+      requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(() => { ld.classList.add('out'); setTimeout(() => ld.remove(), 600); })));
+    }, 30);
+  }, 60);
 });
 // ================= snow ramps: kickers for the snowmobile =================
 const RAMPS = [];
