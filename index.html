@@ -1556,7 +1556,7 @@ function polygonize(sdf, bmin, bmax, h){
 function paintGlove(g, H){
   const prims = allPrims(H), p = g.attributes.position, n = g.attributes.normal, cnt = p.count;
   const col = new Float32Array(cnt * 3), rough = new Float32Array(cnt), zone = new Float32Array(cnt);
-  const FAB = [0.042, 0.037, 0.03], PANEL = [0.105, 0.08, 0.052], LEA = [0.21, 0.148, 0.09], LEA2 = [0.185, 0.128, 0.077], RUB = [0.012, 0.012, 0.013], STR = [0.017, 0.017, 0.018];
+  const FAB = [0.085, 0.077, 0.064], PANEL = [0.15, 0.115, 0.075], LEA = [0.21, 0.148, 0.09], LEA2 = [0.185, 0.128, 0.077], RUB = [0.012, 0.012, 0.013], STR = [0.017, 0.017, 0.018];
   const ax = H.frame, q = V(), tmp = V();
   for (let v = 0; v < cnt; v++) {
     const x = p.getX(v), y = p.getY(v), z = p.getZ(v);
@@ -1631,8 +1631,8 @@ function assembleHand(fr, mcps, fingersJ, radii, thumbJ, bases, mids, heel, cuff
   const W = bases[1].clone().addScaledVector(longAx, 0.02).lerp(bases[2], 0.25);
   const cd = cuffDir.clone().normalize();
   H.palm.push(pRCone(bases[0].clone().lerp(bases[3], 0.5), W, 0.019, 0.0225, 'palm'));
-  H.cuff.push(pRCone(W.clone().addScaledVector(cd, -0.004), W.clone().addScaledVector(cd, 0.058), 0.025, 0.0285, 'cuff'));
-  H.hard.push(pRCone(W.clone().addScaledVector(cd, 0.014), W.clone().addScaledVector(cd, 0.033), 0.0272, 0.0285, 'strap'));
+  
+  
   // knuckle guard over the back of the MCP joints
   const km = mcps.reduce((a, b) => a.add(b), V()).multiplyScalar(0.25);
   tmpV.copy(km).sub(fr.o); const tq = fr.o.clone().addScaledVector(fr.a, tmpV.dot(fr.a)); const out = km.clone().sub(tq).normalize();
@@ -1646,8 +1646,8 @@ function assembleHand(fr, mcps, fingersJ, radii, thumbJ, bases, mids, heel, cuff
   // strap tab on the back of the wrist
   const tabC = W.clone().addScaledVector(cd, 0.0235).addScaledVector(out, 0.0285);
   const tx = cd.clone(), tz = out.clone().addScaledVector(tx, -out.dot(tx)).normalize(), ty = V().crossVectors(tz, tx);
-  H.hard.push(pRBox(tabC, tx, ty, tz, 0.0105, 0.0095, 0.002, 0.0018, 'tab'));
-  H.wrist = W; H.cuffDir = cd; H.sleeveAt = W.clone().addScaledVector(cd, 0.034);
+  
+  H.wrist = W; H.cuffDir = cd; H.sleeveAt = W.clone().addScaledVector(longAx, -0.012);
   return H;
 }
 const tmpV = V();
@@ -1669,13 +1669,13 @@ function leftGuardPose(cuffDir){
   const fr = mkFrame(V(0, 0.001, -0.238), V(0, 0, 1), V(1, 0, 0), V(0, -1, 0), 0.0216, 0.0225);
   const ts = [0.0, 0.021, 0.041, 0.059], radii = [0.0098, 0.0103, 0.0098, 0.0089];
   const lens = [[0.045, 0.027, 0.02], [0.047, 0.029, 0.021], [0.045, 0.028, 0.021], [0.036, 0.022, 0.019]];
-  const mph = [152, 150, 148, 146];
+  const RL = -50, mph = [152 + RL, 150 + RL, 148 + RL, 146 + RL];
   const mcps = ts.map((t, i) => fpt(fr, t, mph[i], 0.019));
   const J = mcps.map((m, i) => wrapJoints(fr, m, ts[i], mph[i], radii[i] + 0.0006, lens[i], 0.002));
-  const thumb = [fpt(fr, 0.034, 212, 0.028), fpt(fr, 0.004, 232, 0.016), fpt(fr, -0.026, 229, 0.0118), fpt(fr, -0.047, 228, 0.0108)];
-  const bases = [fpt(fr, 0.018, 204, 0.026), fpt(fr, 0.031, 200, 0.026), fpt(fr, 0.044, 196, 0.026), fpt(fr, 0.057, 192, 0.025)];
-  const mids = [fpt(fr, 0.008, 176, 0.019), fpt(fr, 0.026, 174, 0.019), fpt(fr, 0.043, 172, 0.019), fpt(fr, 0.059, 170, 0.018)];
-  return assembleHand(fr, mcps, J, radii, thumb, bases, mids, fpt(fr, 0.06, 200, 0.028), cuffDir);
+  const thumb = [fpt(fr, 0.034, 212 + RL, 0.028), fpt(fr, 0.004, 232 + RL, 0.016), fpt(fr, -0.026, 229 + RL, 0.0118), fpt(fr, -0.047, 228 + RL, 0.0108)];
+  const bases = [fpt(fr, 0.018, 204 + RL, 0.026), fpt(fr, 0.031, 200 + RL, 0.026), fpt(fr, 0.044, 196 + RL, 0.026), fpt(fr, 0.057, 192 + RL, 0.025)];
+  const mids = [fpt(fr, 0.008, 176 + RL, 0.019), fpt(fr, 0.026, 174 + RL, 0.019), fpt(fr, 0.043, 172 + RL, 0.019), fpt(fr, 0.059, 170 + RL, 0.018)];
+  return assembleHand(fr, mcps, J, radii, thumb, bases, mids, fpt(fr, 0.06, 200 + RL, 0.028), cuffDir);
 }
 function leftMagPose(cuffDir){
   const fr = mkFrame(V(0, -0.088, -0.066), V(0, -0.973, -0.23), V(0, 0, -1), V(-1, 0, 0), 0.031, 0.0119);
@@ -1711,7 +1711,7 @@ function makeSleeve(){
   g.setAttribute('uv', new THREE.BufferAttribute(uv, 2)); g.setIndex(idx);
   const m = new THREE.Mesh(g, sleeveMat); m.frustumCulled = false; wScene.add(m); return m;
 }
-const _sl = { E: V(), D: V(), P: V(), T: V(), N: V(), B: V(), Q: V(), up: V() };
+const _sl = { Sb: V(), E: V(), D: V(), P: V(), T: V(), N: V(), B: V(), Q: V(), up: V() };
 function solveElbow(S, W, Lu, Lf, pole, out){
   const D = _sl.D.subVectors(W, S); let d = D.length(); D.divideScalar(d || 1); d = clamp(d, Math.abs(Lu - Lf) + 0.01, Lu + Lf - 0.003);
   const along = (Lu * Lu - Lf * Lf + d * d) / (2 * d), h = Math.sqrt(Math.max(Lu * Lu - along * along, 0));
@@ -1728,9 +1728,9 @@ function updateSleeve(m, W, cuffDir, S, pole, Lu, Lf, seed){
   for (let i = 0; i <= SLV_N; i++) {
     const s = i / SLV_N * total; let c, tan;
     if (s <= Lf) { const u = s / Lf; // forearm: leaves the cuff along the glove, bends toward the elbow
-      const P1 = W.clone().addScaledVector(cuffDir, Lf * 0.35), P2 = E.clone().lerp(W, 0.25);
+      const P1 = W.clone().lerp(E, 0.33), P2 = E.clone().lerp(W, 0.25);
       const a = 1 - u; c = W.clone().multiplyScalar(a * a * a).addScaledVector(P1, 3 * a * a * u).addScaledVector(P2, 3 * a * u * u).addScaledVector(E, u * u * u);
-    } else { const u = (s - Lf) / Lu; c = E.clone().lerp(Sx, u); }
+    } else { const u = (s - Lf) / Lu; c = E.clone().lerp(_sl.Sb.copy(Sx).sub(E).multiplyScalar(1.9).add(E), u); }
     pts.push(c);
   }
   for (let i = 0; i <= SLV_N; i++) {
@@ -1738,7 +1738,7 @@ function updateSleeve(m, W, cuffDir, S, pole, Lu, Lf, seed){
     const nrm = _sl.N.copy(ref).addScaledVector(tan, -ref.dot(tan)).normalize(); ref.copy(nrm);
     const bin = _sl.B.crossVectors(tan, nrm);
     const s = i / SLV_N * total, sE = s - Lf;
-    let r = s < 0.012 ? 0.037 + 0.0016 * Math.sin(s / 0.012 * Math.PI) : s < Lf ? lerp(0.0375, 0.046, smooth(0.0, 0.16, s)) : lerp(0.048, 0.055, smooth(Lf, Lf + 0.12, s));
+    let r = s < 0.03 ? lerp(0.0235, 0.039, smooth(0, 0.035, s)) : s < Lf ? lerp(0.039, 0.046, smooth(0.03, 0.16, s)) : lerp(0.048, 0.055, smooth(Lf, Lf + 0.12, s));
     const bunch = Math.exp(-sE * sE / 0.0035);
     for (let j = 0; j <= SLV_R; j++) {
       const th = j / SLV_R * TAU;
@@ -2722,8 +2722,8 @@ function smDrive(dt, ix, iz, boost){
   SM.hitCd -= dt;
   // vertical: follow the ground, launch off crests
   const g = heightAt(SM.pos.x, SM.pos.z);
-  if (SM.air) { SM.vy -= 19 * dt; SM.pos.y += SM.vy * dt; if (SM.pos.y <= g) { if (SM.vy < -7) { P.landDip = Math.min(-SM.vy * 0.012, 0.14); sndCrunch(1.2); for (let k = 0; k < 10; k++) puff(V(SM.pos.x, g + 0.1, SM.pos.z), C_SNOW, 0.6, 1, V((rand() - 0.5) * 5, 1 + rand() * 2, (rand() - 0.5) * 5), 2, 0.7, 1.6); } SM.pos.y = g; SM.air = false; } }
-  else { const vyG = (g - SM.prevG) / Math.max(dt, 1e-3); SM.vy = vyG; SM.pos.y = g; if (vyG < SM.vyPrev - 6 && SM.speed > 10) { SM.air = true; SM.vy = SM.vyPrev; SM.pos.y = SM.prevG + SM.vy * dt; } }
+  if (SM.air) { SM.vy -= 13 * dt; SM.pos.y += SM.vy * dt; if (SM.pos.y <= g) { if (SM.vy < -7) { P.landDip = Math.min(-SM.vy * 0.012, 0.14); sndCrunch(1.2); for (let k = 0; k < 10; k++) puff(V(SM.pos.x, g + 0.1, SM.pos.z), C_SNOW, 0.6, 1, V((rand() - 0.5) * 5, 1 + rand() * 2, (rand() - 0.5) * 5), 2, 0.7, 1.6); } SM.pos.y = g; SM.air = false; } }
+  else { const vyG = (g - SM.prevG) / Math.max(dt, 1e-3); SM.vy = vyG; SM.pos.y = g; if (vyG < SM.vyPrev - 4 && SM.speed > 8) { SM.air = true; SM.vy = SM.vyPrev * 1.35 + 2; SM.pos.y = SM.prevG + SM.vy * dt; } }
   SM.vyPrev = SM.air ? SM.vy : (g - SM.prevG) / Math.max(dt, 1e-3); SM.prevG = SM.air ? SM.pos.y : g;
   if (!SM.air && SM.pos.y < g) SM.pos.y = g;
   // spray, tracks
@@ -4605,6 +4605,48 @@ Promise.all([loadSoldier(), GLOVE_CACHE_P]).then(([g, gc]) => { GLOVE_CACHE = gc
   buildGloves();
   playBtn.disabled = false; playBtn.textContent = 'Deploy';
 });
+// ================= snow ramps: kickers for the snowmobile =================
+const RAMPS = [];
+{
+  const L = 9, W = 4.5, H = 2.6;
+  const mat = new THREE.MeshStandardMaterial({ color: new THREE.Color(0.8, 0.84, 0.92), roughness: 0.88, side: THREE.DoubleSide });
+  const add = (x, z, yaw) => {
+    const fx = -Math.sin(yaw), fz = -Math.cos(yaw), rx = Math.cos(yaw), rz = -Math.sin(yaw);
+    const base = Math.min(heightAt(x, z), heightAt(x + fx * L, z + fz * L), heightAt(x + rx * W / 2, z + rz * W / 2), heightAt(x - rx * W / 2, z - rz * W / 2));
+    const r = { x, z, fx, fz, rx, rz, L, W, H, base };
+    // wedge: rises along +along, lip at along = L, skirt 1.5 m below so it never floats
+    const pts = [], idx = [], P = (a, s, y) => { pts.push(x + fx * a + rx * s, y, z + fz * a + rz * s); return pts.length / 3 - 1; };
+    const sk = base - 1.5, w = W / 2;
+    const a0 = P(0, -w, sk), a1 = P(0, w, sk), b0 = P(L, -w, base + H), b1 = P(L, w, base + H), c0 = P(L, -w, sk), c1 = P(L, w, sk), d0 = P(-0.6, -w, sk), d1 = P(-0.6, w, sk);
+    const e0 = P(0, -w, base), e1 = P(0, w, base);
+    idx.push(e0, b1, b0, e0, e1, b1, d0, e1, e0, d0, d1, e1, b0, c1, c0, b0, b1, c1, e0, b0, c0, e0, c0, a0, a0, d0, e0, e1, c1, b1, e1, a1, c1, a1, e1, d1);
+    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3)); g.setIndex(idx); g.computeVertexNormals();
+    const m = new THREE.Mesh(g, mat); m.castShadow = m.receiveShadow = true; scene.add(m);
+    RAMPS.push(r);
+  };
+  // one right in front of the parked snowmobile, the rest scattered over open ground
+  const sy = 0.4 + Math.PI * 0.15; add(5.5 - Math.sin(sy) * 30, 7 - Math.cos(sy) * 30, sy);
+  let tries = 0;
+  while (RAMPS.length < 14 && tries++ < 4000) {
+    const a = srand() * TAU, d = 30 + srand() * 120, x = Math.sin(a) * d, z = Math.cos(a) * d, yaw = srand() * TAU;
+    if (trees.some(t => (t.x - x) ** 2 + (t.z - z) ** 2 < 120)) continue;
+    if (RAMPS.some(r => (r.x - x) ** 2 + (r.z - z) ** 2 < 900)) continue;
+    if (rocks.some(r => (r.x - x) ** 2 + (r.z - z) ** 2 < 100)) continue;
+    const n = normalAt(x, z, V()); if (n.y < 0.97) continue;
+    add(x, z, yaw);
+  }
+  const h0 = heightAt;
+  heightAt = (x, z) => {
+    let h = h0(x, z);
+    for (const r of RAMPS) {
+      const dx = x - r.x, dz = z - r.z; if (dx * dx + dz * dz > 100) continue;
+      const a = dx * r.fx + dz * r.fz, sd = dx * r.rx + dz * r.rz;
+      if (a >= 0 && a <= r.L && Math.abs(sd) <= r.W / 2) h = Math.max(h, r.base + r.H * a / r.L);
+    }
+    return h;
+  };
+}
+
 // ================= sandbox: walled firing range with lined-up targets =================
 const SB = { on: false, x: 0, z: 0, hw: 14, hl: 45, y: 0 };
 { let m = -1e9; for (let i = 0; i < HG.length; i++) if (HG[i] > m) m = HG[i]; SB.y = m + 45; }
