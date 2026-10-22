@@ -4779,8 +4779,8 @@ function duelArena(on){
   const cb = document.createElement('div'); cb.id = 'chatBox'; cb.innerHTML = '<div id="chatLog"></div><input id="chatIn" maxlength="200" placeholder="Say something · Enter to send · Esc to cancel" hidden autocomplete="off">'; hud.appendChild(cb);
   const sc = document.createElement('div'); sc.id = 'duelScore'; sc.hidden = true; hud.appendChild(sc); if (!$('netBox')) { const nb = document.createElement('div'); nb.id = 'netBox'; hud.appendChild(nb); }
   const pnl = document.createElement('div'); pnl.className = 'panel'; pnl.id = 'pDuel'; pnl.hidden = true;
-  pnl.innerHTML = '<p class="eyebrow"><b>1v1</b> · Kessel Ridge range</p><h2>Duel</h2>'
-    + '<p class="brief">You and one other player in a walled range with cover. Every weapon, unlimited ammo, 3 axes. First to ' + DUEL.goal + ' kills wins the round. Voice and text chat are on.</p>'
+  pnl.innerHTML = '<p class="eyebrow"><b>1v1</b> · Kessel Ridge</p><h2>Duel</h2>'
+    + '<p class="brief">You and one other player on the ridge: trees, rocks, ramps and the snowmobile. Every weapon, unlimited ammo, 3 axes. First to ' + DUEL.goal + ' kills wins the round. Voice and text chat are on.</p>'
     + '<div class="row mp"><input id="dName" maxlength="14" placeholder="Your name"><input id="dCode" maxlength="6" placeholder="Room code · blank for new"></div>'
     + '<div class="row"><button class="btn" id="dGo">Join duel</button><button class="btn ghost" id="dBack">Back</button></div>'
     + '<p class="mpnote" id="dStatus">Share the room code (or the invite link) with your opponent.</p>'
@@ -4800,7 +4800,7 @@ function chatAdd(name, text, cls){
   setTimeout(() => { d.classList.add('out'); setTimeout(() => d.remove(), 900); }, 12000);
 }
 function duelHud(){
-  const sc = $('duelScore'); sc.hidden = !DUEL.on;
+  const sc = $('duelScore'); sc.hidden = !DUEL.on; $('sbQuit').hidden = !(DUEL.on || SB.on);
   if (!DUEL.on) { $('netBox').textContent = ''; return; }
   sc.innerHTML = DUEL.opp ? '<i>You ' + DUEL.me + '</i> · <em>' + DUEL.them + ' ' + dEsc(DUEL.opp.name) + '</em>' : 'Waiting for an opponent · room ' + DUEL.room;
   $('netBox').textContent = '1v1 · room ' + DUEL.room + ' · mic ' + (DUEL.mic ? (DUEL.muted ? 'muted (K)' : 'on (K)') : 'off');
@@ -4819,7 +4819,7 @@ function duelJoin(code, name){
   let ws; try { ws = new WebSocket(duelUrl(code) + '?name=' + encodeURIComponent(DUEL.name)); } catch (e) { duelStatus('Could not open a connection here.'); return; }
   DUEL.ws = ws;
   ws.onmessage = ev => { let m; try { m = JSON.parse(ev.data); } catch (e) { return; } try { duelMsg(m); } catch (e) { console.warn('duel', e); } };
-  ws.onclose = () => { if (DUEL.ws !== ws) return; const was = DUEL.joined; DUEL.ws = null; if (was) { chatAdd('', 'Disconnected from the duel server.', 'sys'); duelDropOpp(); } else { duelStatus('Could not reach the duel server. Try again in a moment.'); chatAdd('', 'Could not reach the duel server. You are alone in the range.', 'sys'); } };
+  ws.onclose = () => { if (DUEL.ws !== ws) return; const was = DUEL.joined; DUEL.ws = null; if (was) { chatAdd('', 'Disconnected from the duel server.', 'sys'); duelDropOpp(); } else { duelStatus('Could not reach the duel server. Try again in a moment.'); chatAdd('', 'Could not reach the duel server. You are alone on the ridge.', 'sys'); } };
   ws.onerror = () => {};
 }
 function duelLeave(quiet){
@@ -4938,7 +4938,7 @@ function duelAvatarTick(e, dt){
   const o = DUEL.opp, s = o && o.s;
   if (e !== DUEL.av || !o) { return; }
   const show = !!(s && !s.d && time - o.sT < 3);
-  if (!show) { e.g.visible = false; e.pos.set(SB.x, SB.y - 300, SB.z); e.g.position.copy(e.pos); return; }
+  if (!show) { e.g.visible = false; e.pos.set(0, -500, 0); e.g.position.copy(e.pos); return; }
   if (!e.g.visible) { e.pos.set(s.x, s.y, s.z); e.yaw = s.yaw; }
   e.g.visible = true;
   const k = Math.min(1, dt * 14); _duq.set(s.x, s.y, s.z);
@@ -4984,7 +4984,7 @@ function duelOppDied(m){
     animateEnemy(c, 0.016, 0); c.g.updateMatrixWorld(true);
     const dir = m.dir ? V(m.dir[0], m.dir[1], m.dir[2]) : V(0, 0.3, 1), at = m.at ? V(m.at[0], m.at[1], m.at[2]) : pos.clone().add(V(0, 1.2, 0));
     hitEnemy0(c, m.part || 'body', c.pos.distanceTo(P.pos), dir.normalize(), at, 9999, m.force || 2, { ap: true, oneshot: true });
-    if (e) { e.g.visible = false; e.pos.y = SB.y - 300; e.g.position.copy(e.pos); }
+    if (e) { e.g.visible = false; e.pos.y = -500; e.g.position.copy(e.pos); }
   }
   feed('<b>' + dEsc(DUEL.opp ? DUEL.opp.name : 'Opponent') + '</b> eliminated<span>' + DUEL.me + ' – ' + DUEL.them + '</span>');
   duelCheckWin(); duelHud();
@@ -4999,15 +4999,16 @@ function duelCheckWin(){
 
 // ---- spawning, respawning, ammo ----
 function duelSpawnPoint(){
-  const side = DUEL.host ? 1 : -1, x = SB.x + (rand() - 0.5) * 16;
-  return { x, z: SB.z + side * (36 + rand() * 4), yaw: side > 0 ? 0 : Math.PI };
+  // the open ridge: one player each side of the start area, about 90 m apart
+  const side = DUEL.host ? 1 : -1, x = (rand() - 0.5) * 40;
+  return { x, z: side * (42 + rand() * 8), yaw: side > 0 ? 0 : Math.PI };
 }
 function duelPlace(){
-  const sp = duelSpawnPoint(); P.pos.set(sp.x, SB.y, sp.z); P.vel.set(0, 0, 0); P.yaw = sp.yaw; P.pitch = 0;
+  const sp = duelSpawnPoint(); P.pos.set(sp.x, 0, sp.z); collide(P.pos, 0.4); P.pos.y = heightAt(P.pos.x, P.pos.z); P.vel.set(0, 0, 0); P.yaw = sp.yaw; P.pitch = 0;
 }
 function duelArm(){ WEAPONS.forEach(w => { w.owned = true; AMMO[w.id] = { mag: w.cap, reserve: w.cap * 4 }; }); P.mag = WPN.cap; P.reserve = WPN.cap * 4; nadeCount = 3; }
 function duelStart(){
-  sbApply(); duelArena(true); if (crate) { scene.remove(crate.g); crate = null; }
+  SB.on = false; sbApply(); duelArena(false); if (crate) { scene.remove(crate.g); crate = null; }
   wave = 1; bz = bzTarget = 0; setNightTarget(0);
   DUEL.av = null; DUEL.deadSent = false; DUEL.hq.length = 0;
   duelPlace(); duelArm();
@@ -5064,7 +5065,7 @@ document.addEventListener('click', ev => {
   else if (id === 'dBack') { if (!DUEL.on) duelLeave(); showPanel('pMain'); }
   else if (id === 'dGo') {
     initAudio(); duelJoin($('dCode').value, $('dName').value);
-    DUEL.on = true; SB.on = true; SBR.resetT = 0; sbApply(); duelArena(true); enterPlay(true);
+    DUEL.on = true; SB.on = false; sbApply(); enterPlay(true);
   }
   else if ((id === 'play' || id === 'cont' || id === 'cont2' || id === 'sbBtn' || id === 'sbQuit') && (DUEL.on || DUEL.ws)) { duelLeave(); if (id === 'sbQuit') duelHud(); }
 }, true);
