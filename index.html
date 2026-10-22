@@ -938,6 +938,8 @@ function updateFx(dt){
 
 // ================= audio =================
 let AC = null, master, revIn, noiseBuf, windF, windG, hissG, muted = false;
+const SET = { sens: 1, fov: 72, inv: false, master: 1, wind: 1, voice: 1 };
+try { Object.assign(SET, JSON.parse(localStorage.getItem('whiteout-settings') || '{}')); } catch (e) {}
 function initAudio(){
   if (AC) { if (AC.state === 'suspended') AC.resume(); return; }
   try { AC = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return; }
@@ -993,7 +995,7 @@ function sndHurt(){ if (!AC) return; const t = AC.currentTime; tone(t, 110, 45, 
 function sndHeart(){ if (!AC) return; const t = AC.currentTime; tone(t, 70, 40, 0.35, 0.12); tone(t + 0.22, 65, 38, 0.25, 0.12); }
 function sndRumble(){ if (!AC) return; const t = AC.currentTime, pan = rand() * 1.6 - 0.8; noiseHit(t, { f: 140, type: 'lowpass', gain: 0.35, dur: 3.5, pan, attack: 0.08, rev: 0.6 }); tone(t, 55, 28, 0.25, 2.5, pan); }
 function sndDry(){ if (!AC) return; sndClick(AC.currentTime, 3000, 0.2); }
-function updateAudio(){ if (!AC) return; const t = AC.currentTime; master.gain.setTargetAtTime(muted ? 0 : 0.75, t, 0.05); windF.frequency.setTargetAtTime(240 + windStr * 70, t, 0.6); windG.gain.setTargetAtTime(0.035 + windStr * 0.02, t, 0.6); hissG.gain.setTargetAtTime(0.003 + windStr * 0.0025 + gust * 0.01, t, 0.6); }
+function updateAudio(){ if (!AC) return; const t = AC.currentTime; master.gain.setTargetAtTime(muted ? 0 : 0.75 * SET.master, t, 0.05); windF.frequency.setTargetAtTime(240 + windStr * 70, t, 0.6); windG.gain.setTargetAtTime((0.035 + windStr * 0.02) * SET.wind, t, 0.6); hissG.gain.setTargetAtTime((0.003 + windStr * 0.0025 + gust * 0.01) * SET.wind, t, 0.6); }
 
 // ================= shared geometry helpers =================
 const GC = {};
@@ -4273,7 +4275,7 @@ function updatePlayer(dt){
   const br = P.ads * (P.crouchT > 0.5 ? 0.5 : 1) * (1 - P.hold * 0.9) * (1 + (1 - P.hp / 100) * 1.5);
   P.pitch = clamp(P.pitch, -1.5, 1.5);
   camera.rotation.set(P.pitch + P.shakeX + (Math.sin(time * 1.3) * 0.0022 + Math.sin(time * 2.1) * 0.0009) * br, P.yaw + P.shakeY + (Math.sin(time * 0.7) * 0.0024 + Math.sin(time * 1.7) * 0.001) * br, -P.lean * 0.14 + Math.sin(P.bob) * 0.006 * P.bobAmt + P.roll);
-  const fov = lerp(72 + (WS.mode === 'glide' ? clamp((WS.v - 14) / 2.4, 0, 24) : 0), WPN.zoom, P.ads) + 5 * P.sprintT;
+  const fov = lerp(SET.fov + (WS.mode === 'glide' ? clamp((WS.v - 14) / 2.4, 0, 24) : 0), WPN.zoom, P.ads) + 5 * P.sprintT;
   if (Math.abs(camera.fov - fov) > 0.01) { camera.fov = fov; camera.updateProjectionMatrix(); }
 }
 function updateDeathCam(dt){
@@ -4501,8 +4503,8 @@ addEventListener('mousemove', e => {
   let mx = e.movementX || 0, my = e.movementY || 0; const mag = Math.hypot(mx, my);
   if (mag > 140 && mag > 7 * (P.mAvg || 10)) return;
   P.mAvg = lerp(P.mAvg || 10, mag, 0.2); mx = clamp(mx, -140, 140); my = clamp(my, -140, 140);
-  const s = 0.0021 * (1 - 0.45 * P.ads) * (WPN.id === 'dmr' ? lerp(1, 0.38, P.ads) : 1);
-  P.yaw -= mx * s; P.pitch -= my * s;
+  const s = 0.0021 * SET.sens * (1 - 0.45 * P.ads) * (WPN.id === 'dmr' ? lerp(1, 0.38, P.ads) : 1);
+  P.yaw -= mx * s; P.pitch -= my * s * (SET.inv ? -1 : 1);
   P.swayX = clamp(P.swayX + mx * 0.02, -1.5, 1.5); P.swayY = clamp(P.swayY + my * 0.02, -1.5, 1.5);
 });
 addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); buildComposer(); });
@@ -4802,7 +4804,8 @@ function chatAdd(name, text, cls){
 function duelHud(){
   const sc = $('duelScore'); sc.hidden = !DUEL.on; $('sbQuit').hidden = !(DUEL.on || SB.on);
   if (!DUEL.on) { $('netBox').textContent = ''; return; }
-  sc.innerHTML = DUEL.opp ? '<i>You ' + DUEL.me + '</i> · <em>' + DUEL.them + ' ' + dEsc(DUEL.opp.name) + '</em>' : 'Waiting for an opponent · room ' + DUEL.room;
+  const icon = m => m === 'talk' ? MIC_SVG('#3fd47a', false) : m === 'muted' ? MIC_SVG('#ff4b4b', true) : '';
+  sc.innerHTML = DUEL.opp ? '<i>You' + icon(DUEL.selfMode) + ' ' + DUEL.me + '</i> · <em>' + DUEL.them + ' ' + dEsc(DUEL.opp.name) + icon(DUEL.oppMode) + '</em>' : 'Waiting for an opponent · room ' + DUEL.room;
   $('netBox').textContent = '1v1 · room ' + DUEL.room + ' · mic ' + (DUEL.mic ? (DUEL.muted ? 'muted (K)' : 'on (K)') : 'off');
 }
 
@@ -4824,7 +4827,7 @@ function duelJoin(code, name){
 }
 function duelLeave(quiet){
   const ws = DUEL.ws; DUEL.ws = null; if (ws) { try { ws.close(); } catch (e) {} }
-  rtcClose(); if (DUEL.mic) { DUEL.mic.getTracks().forEach(t => t.stop()); DUEL.mic = null; }
+  rtcClose(); DUEL.lMeter = null; if (DUEL.mic) { DUEL.mic.getTracks().forEach(t => t.stop()); DUEL.mic = null; }
   duelDropOpp(); DUEL.on = false; DUEL.joined = false; DUEL.me = DUEL.them = 0; duelArena(false); chatClose(); duelHud();
   if (!quiet) { try { const u = new URL(location.href); u.searchParams.delete('duel'); history.replaceState(null, '', u.toString()); } catch (e) {} }
 }
@@ -4871,7 +4874,7 @@ function duelMsg(m){
 }
 
 // ---- voice: one WebRTC audio link, signalled through the room ----
-function rtcClose(){ if (DUEL.pc) { try { DUEL.pc.close(); } catch (e) {} DUEL.pc = null; } DUEL.iceQ = []; const a = $('dAudio'); if (a) a.srcObject = null; }
+function rtcClose(){ DUEL.rMeter = null; if (DUEL.pc) { try { DUEL.pc.close(); } catch (e) {} DUEL.pc = null; } DUEL.iceQ = []; const a = $('dAudio'); if (a) a.srcObject = null; }
 async function rtcStart(offer){
   if (!window.RTCPeerConnection || !DUEL.opp) return;
   rtcClose();
@@ -4882,7 +4885,8 @@ async function rtcStart(offer){
   pc.onicecandidate = ev => { if (ev.candidate && DUEL.opp) dSend({ to: DUEL.opp.id, t: 'rtc', f: DUEL.id, ice: ev.candidate }); };
   pc.ontrack = ev => {
     let a = $('dAudio'); if (!a) { a = document.createElement('audio'); a.id = 'dAudio'; a.autoplay = true; a.playsInline = true; document.body.appendChild(a); }
-    a.srcObject = ev.streams && ev.streams[0] ? ev.streams[0] : new MediaStream([ev.track]); const pr = a.play && a.play(); if (pr && pr.catch) pr.catch(() => {});
+    a.srcObject = ev.streams && ev.streams[0] ? ev.streams[0] : new MediaStream([ev.track]); a.volume = clamp(SET.voice, 0, 1); const pr = a.play && a.play(); if (pr && pr.catch) pr.catch(() => {});
+    DUEL.rMeter = voiceMeter(a.srcObject);
   };
   pc.onconnectionstatechange = () => { if (pc.connectionState === 'connected') chatAdd('', 'Voice connected' + (DUEL.mic ? ' · K mutes your mic' : ' · no mic, listening only'), 'sys'); else if (pc.connectionState === 'failed') chatAdd('', 'Voice could not connect on this network. Text chat still works.', 'sys'); };
   if (offer) { const o = await pc.createOffer(); await pc.setLocalDescription(o); dSend({ to: DUEL.opp.id, t: 'rtc', f: DUEL.id, sdp: pc.localDescription }); }
@@ -4925,10 +4929,45 @@ function duelMakeAvatar(){
   forceType = 'rifle'; let e; try { e = spawnEnemy(); } finally { forceType = null; }
   e.isDuel = true; e.T = Object.assign({}, e.T, { spd: 0 }); e.hp = 1e9;
   const nm = DUEL.opp.name.toUpperCase();
-  const tex = canvasTex(256, 64, (g, w, h) => { g.clearRect(0, 0, w, h); g.font = '600 34px "Barlow Condensed", Arial Narrow, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.lineWidth = 6; g.strokeStyle = 'rgba(0,0,0,.7)'; g.strokeText(nm, w / 2, h / 2); g.fillStyle = '#ff6a3a'; g.fillText(nm, w / 2, h / 2); });
-  const tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true, fog: false })); tag.scale.set(1.6, 0.4, 1); tag.position.y = 2.25; tag.renderOrder = 30; e.g.add(tag);
+  const tex = canvasTex(384, 64, () => {}); e.tagTex = tex; e.tagMode = null; e.tagName = nm; drawDuelTag(e, 'none');
+  const tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true, fog: false })); tag.scale.set(2.4, 0.4, 1); tag.position.y = 2.25; tag.renderOrder = 30; e.g.add(tag);
   DUEL.av = e; return e;
 }
+function drawMic(g, x, y, s, col, muted){
+  // a small microphone glyph centred on x, y
+  g.save(); g.translate(x, y); g.scale(s, s); g.lineCap = 'round'; g.lineJoin = 'round';
+  const path = () => { g.beginPath(); g.moveTo(-5, -12); g.arc(0, -12, 5, Math.PI, 0); g.lineTo(5, 2); g.arc(0, 2, 5, 0, Math.PI); g.closePath(); };
+  g.lineWidth = 7; g.strokeStyle = 'rgba(0,0,0,.65)'; path(); g.stroke(); g.beginPath(); g.arc(0, 1, 10, 0.15 * Math.PI, 0.85 * Math.PI); g.moveTo(0, 11); g.lineTo(0, 17); g.moveTo(-6, 17); g.lineTo(6, 17); g.stroke();
+  g.fillStyle = col; path(); g.fill(); g.lineWidth = 2.6; g.strokeStyle = col; g.beginPath(); g.arc(0, 1, 10, 0.15 * Math.PI, 0.85 * Math.PI); g.moveTo(0, 11); g.lineTo(0, 17); g.moveTo(-6, 17); g.lineTo(6, 17); g.stroke();
+  if (muted) { g.lineWidth = 7; g.strokeStyle = 'rgba(0,0,0,.65)'; g.beginPath(); g.moveTo(-12, -18); g.lineTo(12, 18); g.stroke(); g.lineWidth = 3.4; g.strokeStyle = col; g.beginPath(); g.moveTo(-12, -18); g.lineTo(12, 18); g.stroke(); }
+  g.restore();
+}
+function drawDuelTag(e, mode){
+  if (e.tagMode === mode) return; e.tagMode = mode;
+  const c = e.tagTex.image, g = c.getContext('2d'), w = c.width, h = c.height; g.clearRect(0, 0, w, h);
+  g.font = '600 34px "Barlow Condensed", Arial Narrow, sans-serif'; g.textBaseline = 'middle';
+  const tw = g.measureText(e.tagName).width, icon = mode !== 'none' ? 34 : 0, x0 = (w - tw - icon) / 2;
+  if (mode === 'talk') { g.save(); g.shadowColor = '#3fd47a'; g.shadowBlur = 14; drawMic(g, x0 + 12, h / 2, 1, '#3fd47a', false); g.restore(); }
+  else if (mode === 'muted') drawMic(g, x0 + 12, h / 2, 1, '#ff4b4b', true);
+  g.textAlign = 'left'; g.lineWidth = 6; g.strokeStyle = 'rgba(0,0,0,.7)'; g.strokeText(e.tagName, x0 + icon, h / 2); g.fillStyle = mode === 'talk' ? '#9ff0bd' : '#ff6a3a'; g.fillText(e.tagName, x0 + icon, h / 2);
+  e.tagTex.needsUpdate = true;
+}
+// voice activity: a level meter on each audio stream
+function voiceMeter(stream){
+  try {
+    const ctx = AC || (DUEL.vac = DUEL.vac || new (window.AudioContext || window.webkitAudioContext)());
+    const src = ctx.createMediaStreamSource(stream), an = ctx.createAnalyser(); an.fftSize = 512; src.connect(an);
+    return { an, buf: new Float32Array(an.fftSize), hold: 0, src };
+  } catch (e) { return null; }
+}
+function voiceTalking(v, dt){
+  if (!v) return false;
+  v.an.getFloatTimeDomainData(v.buf); let sum = 0; for (let i = 0; i < v.buf.length; i++) sum += v.buf[i] * v.buf[i];
+  const rms = Math.sqrt(sum / v.buf.length);
+  if (rms > 0.02) v.hold = 0.3; else v.hold -= dt;
+  return v.hold > 0;
+}
+const MIC_SVG = (col, muted) => '<svg width="14" height="18" viewBox="-12 -20 24 40" style="vertical-align:-3px;margin-left:6px" fill="none" stroke="' + col + '" stroke-width="3" stroke-linecap="round"><path d="M-5 -12 A5 5 0 0 1 5 -12 L5 2 A5 5 0 0 1 -5 2 Z" fill="' + col + '"/><path d="M-9.5 4 A10 10 0 0 0 9.5 4 M0 11 L0 17 M-6 17 L6 17"/>' + (muted ? '<path d="M-12 -18 L12 18" stroke-width="3.4"/>' : '') + '</svg>';
 function duelDropOpp(){
   const e = DUEL.av; DUEL.av = null; DUEL.opp = null; rtcClose();
   if (e) { scene.remove(e.g); for (const m of e.parts) { const i = enemyParts.indexOf(m); if (i >= 0) enemyParts.splice(i, 1); } const i = enemies.indexOf(e); if (i >= 0) enemies.splice(i, 1); }
@@ -5024,6 +5063,11 @@ function duelRespawn(){
 }
 function duelTick(dt){
   if (!DUEL.on) return;
+  if (DUEL.mic && !DUEL.lMeter) DUEL.lMeter = voiceMeter(DUEL.mic);
+  const selfMode = !DUEL.mic || DUEL.muted ? 'muted' : voiceTalking(DUEL.lMeter, dt) ? 'talk' : 'none';
+  const os = DUEL.opp && DUEL.opp.s, oppMode = !DUEL.opp ? 'none' : os && os.mu ? 'muted' : voiceTalking(DUEL.rMeter, dt) ? 'talk' : 'none';
+  if (selfMode !== DUEL.selfMode || oppMode !== DUEL.oppMode) { DUEL.selfMode = selfMode; DUEL.oppMode = oppMode; duelHud(); }
+  if (DUEL.av && DUEL.av.tagTex) drawDuelTag(DUEL.av, oppMode);
   if (DUEL.opp && !DUEL.av && soldierAsset && state !== 'menu') duelMakeAvatar();
   // I died: tell them (they score), whatever killed me
   if (state === 'dying' && !DUEL.deadSent) {
@@ -5039,7 +5083,7 @@ function duelTick(dt){
   DUEL.sendT -= dt;
   if (live && DUEL.sendT <= 0) {
     DUEL.sendT = 1 / 15;
-    dSend({ t: 'p', f: DUEL.id, x: r2(P.pos.x), y: r2(P.pos.y), z: r2(P.pos.z), yaw: r2(P.yaw), pitch: r2(P.pitch), c: r2(P.crouchT), sp: r2(P.speedNow || 0), d: state === 'dying' || P.hp <= 0 ? 1 : 0, sh: DUEL.shots.splice(0, 6) });
+    dSend({ t: 'p', f: DUEL.id, mu: !DUEL.mic || DUEL.muted ? 1 : 0, x: r2(P.pos.x), y: r2(P.pos.y), z: r2(P.pos.z), yaw: r2(P.yaw), pitch: r2(P.pitch), c: r2(P.crouchT), sp: r2(P.speedNow || 0), d: state === 'dying' || P.hp <= 0 ? 1 : 0, sh: DUEL.shots.splice(0, 6) });
   }
   if (state === 'playing') {
     P.reserve = Math.max(P.reserve, WPN.cap * 4);
@@ -5071,6 +5115,33 @@ document.addEventListener('click', ev => {
 }, true);
 if (new URLSearchParams(location.search).get('duel')) setTimeout(() => { if (state === 'menu') showPanel('pDuel'); }, 0);
 
+
+// ================= settings: mouse, field of view, volumes =================
+{
+  const css = document.createElement('style');
+  css.textContent = '.sets{display:grid;grid-template-columns:auto 1fr auto;gap:14px 16px;align-items:center;max-width:520px}.sets label{font:500 11px/1 var(--f-mono);letter-spacing:.12em;text-transform:uppercase;color:var(--frost)}.sets output{font:600 15px/1 var(--f-mono);color:var(--ice);min-width:48px;text-align:right}.sets input[type=range]{width:100%;accent-color:var(--blaze)}.sets input[type=checkbox]{accent-color:var(--blaze);width:18px;height:18px;justify-self:start}';
+  document.head.appendChild(css);
+  const rows = [['sens', 'Mouse sensitivity', 0.2, 3, 0.05, v => v.toFixed(2) + '×'], ['fov', 'Field of view', 60, 100, 1, v => Math.round(v) + '°'], ['inv', 'Invert mouse Y'],
+    ['master', 'Master volume', 0, 1.5, 0.05, v => Math.round(v * 100) + '%'], ['wind', 'Wind / white noise', 0, 1.5, 0.05, v => Math.round(v * 100) + '%'], ['voice', 'Voice chat volume', 0, 1, 0.05, v => Math.round(v * 100) + '%']];
+  const pnl = document.createElement('div'); pnl.className = 'panel'; pnl.id = 'pSet'; pnl.hidden = true;
+  pnl.innerHTML = '<p class="eyebrow"><b>Settings</b> · saved on this device</p><h2>Settings</h2><div class="sets">' + rows.map(r => r.length === 2 ? '<label for="set_' + r[0] + '">' + r[1] + '</label><input type="checkbox" id="set_' + r[0] + '"><span></span>'
+    : '<label for="set_' + r[0] + '">' + r[1] + '</label><input type="range" id="set_' + r[0] + '" min="' + r[2] + '" max="' + r[3] + '" step="' + r[4] + '"><output id="out_' + r[0] + '"></output>').join('') + '</div>'
+    + '<div class="row"><button class="btn" id="setBack">Done</button><button class="btn ghost" id="setReset">Reset</button></div>';
+  $('sheet').appendChild(pnl);
+  const save = () => { try { localStorage.setItem('whiteout-settings', JSON.stringify(SET)); } catch (e) {} };
+  const apply = () => { const a = $('dAudio'); if (a) a.volume = clamp(SET.voice, 0, 1); updateAudio(); };
+  const sync = () => { for (const r of rows) { const el = $('set_' + r[0]); if (r.length === 2) el.checked = !!SET[r[0]]; else { el.value = SET[r[0]]; $('out_' + r[0]).textContent = r[5](+SET[r[0]]); } } };
+  for (const r of rows) $('set_' + r[0]).addEventListener('input', ev => { SET[r[0]] = r.length === 2 ? ev.target.checked : +ev.target.value; if (r.length > 2) $('out_' + r[0]).textContent = r[5](SET[r[0]]); save(); apply(); });
+  for (const id of ['play', 'resume']) { const b = document.createElement('button'); b.className = 'btn ghost'; b.textContent = 'Settings'; b.dataset.setFrom = id === 'play' ? 'pMain' : 'pPause'; b.className += ' setOpen'; $(id).parentNode.appendChild(b); }
+  let from = 'pMain';
+  { const sp0 = showPanel; showPanel = id => { sp0(id); $('pSet').hidden = id !== 'pSet'; }; }
+  document.addEventListener('click', ev => {
+    const t = ev.target; if (!t) return;
+    if (t.classList && t.classList.contains('setOpen')) { from = t.dataset.setFrom; sync(); showPanel('pSet'); }
+    else if (t.id === 'setBack') showPanel(from);
+    else if (t.id === 'setReset') { Object.assign(SET, { sens: 1, fov: 72, inv: false, master: 1, wind: 1, voice: 1 }); save(); sync(); apply(); }
+  }, true);
+}
 window.__WO = { setPose(x, z, yaw, pitch){ P.pos.set(x, heightAt(x, z), z); P.yaw = yaw; P.pitch = pitch; }, spawn(n){ for (let i = 0; i < n; i++) spawnEnemy(); }, enemies, P, get state(){ return state; }, info(){ return renderer.info.render; }, GRIP, feat(){ return { raycaster, enemyParts, coverMeshes, rayTerrain, NIGHT, setNightTarget, FL, AXE, throwAxe, FIRE, NET, TH, WS, cycleThermal, FUN, barrels, damageBarrel, loot, get keys(){ return keys; }, heightAt, get trailCount(){ return trailMesh.count; }, rockets, ragImpulse, RI, spawnSled, spawnHeli, HELI, VEH, vehDamage, SM, fellTree, trees, KC, fallen, startKillCam, smToggle, get lastKill(){ return lastKill; }, startWave, WEAPONS, setWeapon, spawnCrate, explode, applyWeaponLook, setBz(v){ bz = bzTarget = v; }, setWave(n){ wave = n; } }; }, fpInfo(){ return fp ? { tris: fp.tris, ms: fp.ms } : null; }, gun, kill(i, part){ const e = enemies[i]; if (!e) return; const at = V(); e.bones[part === 'head' ? 'Head' : part === 'leg' ? 'LeftLeg' : 'Spine2'].getWorldPosition(at); const dir = at.clone().sub(camera.position).normalize(); e.hp = 1; hitEnemy(e, part, at.distanceTo(camera.position), dir, at); }, step(n, d){ for (let i = 0; i < n; i++) loop(d || 0.033); } };
 loop();
 })();
