@@ -4741,6 +4741,335 @@ function sbUpdate(dt){
   }, true);
 }
 
+// ================= 1v1 duel: rooms relayed by the whiteout-rooms worker, WebRTC voice, text chat =================
+const DUEL = { on: false, ws: null, id: null, host: false, room: '', name: 'Player', opp: null, av: null, me: 0, them: 0, goal: 5, sendT: 0, shots: [], hq: [],
+  pc: null, mic: null, micP: null, muted: false, iceQ: [], typing: false, remote: false, nuking: false, deadSent: false, lastHit: null, winT: 0 };
+const DUEL_WS = 'wss://whiteout-rooms.r00ster.workers.dev';
+function duelUrl(code){ const q = new URLSearchParams(location.search).get('ws'); return (q ? q.replace(/\/$/, '') : DUEL_WS) + '/room/D' + code; }
+function dSend(o){ if (DUEL.ws && DUEL.ws.readyState === 1) { try { DUEL.ws.send(JSON.stringify(o)); } catch (e) {} } }
+const dEsc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+
+// ---- arena cover (only in a duel) ----
+const duelCovers = [], duelMeshes = [];
+{
+  const mat = new THREE.MeshStandardMaterial({ color: lin(0x6f7780), roughness: 0.85 });
+  const box = (x, z, w, h, d) => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat); m.position.set(SB.x + x, SB.y + h / 2, SB.z + z);
+    m.castShadow = m.receiveShadow = true; m.visible = false; scene.add(m); duelMeshes.push(m);
+    duelCovers.push({ x: SB.x + x, z: SB.z + z, hx: w / 2, hz: d / 2, y0: SB.y, top: SB.y + h });
+  };
+  box(0, 0, 5, 1.3, 1); box(-8, 13, 1, 1.3, 4); box(8, -13, 1, 1.3, 4); box(8, 17, 3, 2.3, 3); box(-8, -17, 3, 2.3, 3);
+  box(-5, 29, 4, 1.2, 1); box(5, -29, 4, 1.2, 1); box(0, 22, 2, 2.3, 2); box(0, -22, 2, 2.3, 2); box(-9, 2, 2, 2.3, 2); box(9, -2, 2, 2.3, 2);
+}
+function duelArena(on){
+  for (const m of duelMeshes) { m.visible = on; const i = coverMeshes.indexOf(m); if (on && i < 0) coverMeshes.push(m); if (!on && i >= 0) coverMeshes.splice(i, 1); }
+  for (const c of duelCovers) { const i = covers.indexOf(c); if (on && i < 0) covers.push(c); if (!on && i >= 0) covers.splice(i, 1); }
+}
+
+// ---- UI: menu panel, chat box, score ----
+{
+  const css = document.createElement('style');
+  css.textContent = '#chatBox{position:absolute;left:calc(22px + env(safe-area-inset-left,0px));bottom:calc(118px + env(safe-area-inset-bottom,0px));width:min(380px,72vw);display:flex;flex-direction:column;gap:3px;pointer-events:none}'
+    + '#chatLog div{font:500 13px/1.35 var(--f-mono);color:#fff;background:rgba(11,16,21,.55);padding:4px 8px;transition:opacity .8s;overflow-wrap:anywhere}#chatLog div b{color:var(--blaze);font-weight:600;margin-right:6px}#chatLog div.me b{color:#9fd0ff}#chatLog div.sys{color:var(--amber)}#chatLog div.out{opacity:0}'
+    + '#chatIn{pointer-events:auto;background:rgba(11,16,21,.85);border:1px solid var(--blaze);color:#fff;font:500 13px var(--f-mono);padding:7px 9px;outline:none;border-radius:2px}'
+    + '#duelScore{position:absolute;left:50%;top:calc(98px + env(safe-area-inset-top,0px));transform:translateX(-50%);font:700 22px/1 var(--f-display);letter-spacing:.12em;text-transform:uppercase;color:#fff;white-space:nowrap}#duelScore em{font-style:normal;color:var(--blaze)}#duelScore i{font-style:normal;color:#9fd0ff}'
+    + '#dVoice{font:500 11px/1 var(--f-mono);letter-spacing:.08em;text-transform:uppercase;color:var(--frost);margin-top:6px}';
+  document.head.appendChild(css);
+  const hud = $('hud');
+  const cb = document.createElement('div'); cb.id = 'chatBox'; cb.innerHTML = '<div id="chatLog"></div><input id="chatIn" maxlength="200" placeholder="Say something · Enter to send · Esc to cancel" hidden autocomplete="off">'; hud.appendChild(cb);
+  const sc = document.createElement('div'); sc.id = 'duelScore'; sc.hidden = true; hud.appendChild(sc); if (!$('netBox')) { const nb = document.createElement('div'); nb.id = 'netBox'; hud.appendChild(nb); }
+  const pnl = document.createElement('div'); pnl.className = 'panel'; pnl.id = 'pDuel'; pnl.hidden = true;
+  pnl.innerHTML = '<p class="eyebrow"><b>1v1</b> · Kessel Ridge range</p><h2>Duel</h2>'
+    + '<p class="brief">You and one other player in a walled range with cover. Every weapon, unlimited ammo, 3 axes. First to ' + DUEL.goal + ' kills wins the round. Voice and text chat are on.</p>'
+    + '<div class="row mp"><input id="dName" maxlength="14" placeholder="Your name"><input id="dCode" maxlength="6" placeholder="Room code · blank for new"></div>'
+    + '<div class="row"><button class="btn" id="dGo">Join duel</button><button class="btn ghost" id="dBack">Back</button></div>'
+    + '<p class="mpnote" id="dStatus">Share the room code (or the invite link) with your opponent.</p>'
+    + '<div class="keys"><div><kbd>Enter</kbd>Text chat</div><div><kbd>K</kbd>Mute mic</div></div>';
+  $('sheet').appendChild(pnl);
+  const btn = document.createElement('button'); btn.className = 'btn ghost'; btn.id = 'duelBtn'; btn.textContent = '1v1';
+  $('play').parentNode.insertBefore(btn, $('cont'));
+  try { $('dName').value = localStorage.getItem('whiteout-name') || ''; } catch (e) {}
+  const q = new URLSearchParams(location.search).get('duel'); if (q) $('dCode').value = q.toUpperCase().slice(0, 6);
+}
+{ const sp0 = showPanel; showPanel = id => { sp0(id); $('pDuel').hidden = id !== 'pDuel'; }; }
+function duelStatus(t){ $('dStatus').innerHTML = t; }
+function chatAdd(name, text, cls){
+  const log = $('chatLog'), d = document.createElement('div'); if (cls) d.className = cls;
+  d.innerHTML = (name ? '<b>' + dEsc(name) + '</b>' : '') + dEsc(text); log.appendChild(d);
+  while (log.children.length > 7) log.firstChild.remove();
+  setTimeout(() => { d.classList.add('out'); setTimeout(() => d.remove(), 900); }, 12000);
+}
+function duelHud(){
+  const sc = $('duelScore'); sc.hidden = !DUEL.on;
+  if (!DUEL.on) { $('netBox').textContent = ''; return; }
+  sc.innerHTML = DUEL.opp ? '<i>You ' + DUEL.me + '</i> · <em>' + DUEL.them + ' ' + dEsc(DUEL.opp.name) + '</em>' : 'Waiting for an opponent · room ' + DUEL.room;
+  $('netBox').textContent = '1v1 · room ' + DUEL.room + ' · mic ' + (DUEL.mic ? (DUEL.muted ? 'muted (K)' : 'on (K)') : 'off');
+}
+
+// ---- connection ----
+function duelJoin(code, name){
+  duelLeave(true);
+  code = String(code || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6) || Math.random().toString(36).slice(2, 7).toUpperCase();
+  DUEL.room = code; DUEL.name = (name || 'Player').replace(/[<>&"]/g, '').slice(0, 14) || 'Player';
+  try { localStorage.setItem('whiteout-name', DUEL.name); } catch (e) {}
+  // ask for the mic straight away (needs the click); voice is optional
+  DUEL.micP = (navigator.mediaDevices && navigator.mediaDevices.getUserMedia ? navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }) : Promise.reject())
+    .then(s => { DUEL.mic = s; DUEL.muted = false; duelHud(); return s; }).catch(() => { DUEL.mic = null; return null; });
+  duelStatus('Connecting to room <b>' + code + '</b>…');
+  let ws; try { ws = new WebSocket(duelUrl(code) + '?name=' + encodeURIComponent(DUEL.name)); } catch (e) { duelStatus('Could not open a connection here.'); return; }
+  DUEL.ws = ws;
+  ws.onmessage = ev => { let m; try { m = JSON.parse(ev.data); } catch (e) { return; } try { duelMsg(m); } catch (e) { console.warn('duel', e); } };
+  ws.onclose = () => { if (DUEL.ws !== ws) return; const was = DUEL.joined; DUEL.ws = null; if (was) { chatAdd('', 'Disconnected from the duel server.', 'sys'); duelDropOpp(); } else { duelStatus('Could not reach the duel server. Try again in a moment.'); chatAdd('', 'Could not reach the duel server. You are alone in the range.', 'sys'); } };
+  ws.onerror = () => {};
+}
+function duelLeave(quiet){
+  const ws = DUEL.ws; DUEL.ws = null; if (ws) { try { ws.close(); } catch (e) {} }
+  rtcClose(); if (DUEL.mic) { DUEL.mic.getTracks().forEach(t => t.stop()); DUEL.mic = null; }
+  duelDropOpp(); DUEL.on = false; DUEL.joined = false; DUEL.me = DUEL.them = 0; duelArena(false); chatClose(); duelHud();
+  if (!quiet) { try { const u = new URL(location.href); u.searchParams.delete('duel'); history.replaceState(null, '', u.toString()); } catch (e) {} }
+}
+function duelFull(){
+  duelLeave(true); SB.on = false; sbApply(); resetGame(); state = 'menu';
+  if (document.exitPointerLock && document.pointerLockElement) document.exitPointerLock();
+  showPanel('pDuel'); duelStatus('That room already has two players. Pick another code.');
+}
+function inviteLink(){ const u = new URL(location.href); u.search = ''; u.searchParams.set('duel', DUEL.room); return u.toString(); }
+function duelMsg(m){
+  switch (m.t) {
+    case 'full': duelFull(); return;
+    case 'welcome': {
+      if (m.peers.length >= 2) { duelFull(); return; }
+      DUEL.id = m.id; DUEL.host = m.host === m.id;
+      if (m.peers.length) DUEL.opp = { id: m.peers[0].id, name: m.peers[0].name, s: null, sT: -99 };
+      try { history.replaceState(null, '', inviteLink()); } catch (e) {}
+      duelStatus('In room <b>' + DUEL.room + '</b> · <a href="#" id="dCopy">copy invite link</a>');
+      const c = $('dCopy'); if (c) c.onclick = ev => { ev.preventDefault(); const l = inviteLink(); try { navigator.clipboard.writeText(l); c.textContent = 'copied'; } catch (e) { prompt('Invite link', l); } };
+      DUEL.joined = true; if (state === 'playing' || state === 'paused') duelRespawn();
+      chatAdd('', DUEL.opp ? 'Joined room ' + DUEL.room + ' · ' + DUEL.opp.name + ' is here. Fight!' : 'Room ' + DUEL.room + ' · waiting for your opponent. Send them the code.', 'sys');
+      duelHud(); return;
+    }
+    case 'join':
+      if (DUEL.opp && DUEL.opp.id !== m.id) return;
+      DUEL.opp = { id: m.id, name: m.name, s: null, sT: -99 }; DUEL.me = DUEL.them = 0;
+      chatAdd('', m.name + ' joined. Fight!', 'sys'); banner('1v1', DUEL.name + ' vs ' + m.name + ' · first to ' + DUEL.goal);
+      if (state === 'playing' || state === 'paused') duelRespawn();
+      rtcStart(true); duelHud(); return;
+    case 'leave':
+      if (!DUEL.opp || DUEL.opp.id !== m.id) return;
+      chatAdd('', DUEL.opp.name + ' left the duel.', 'sys'); duelDropOpp(); duelHud(); return;
+  }
+  if (!DUEL.opp || m.f !== DUEL.opp.id) return;
+  switch (m.t) {
+    case 'p': DUEL.opp.s = m; DUEL.opp.sT = time; if (m.sh) for (const s of m.sh) duelPeerShot(s); break;
+    case 'hit': for (const h of m.h) duelTakeHit(h); break;
+    case 'died': duelOppDied(m); break;
+    case 'boom': DUEL.remote = true; try { explode(V(m.p[0], m.p[1], m.p[2]), 'player', true); } finally { DUEL.remote = false; } break;
+    case 'nuke': DUEL.remote = true; try { rpgNuke(V(m.p[0], m.p[1], m.p[2])); } finally { DUEL.remote = false; } break;
+    case 'chat': chatAdd(DUEL.opp.name, String(m.x || '').slice(0, 200)); if (AC) tone(AC.currentTime, 880, 1100, 0.06, 0.05, 0, 'triangle'); break;
+    case 'rtc': rtcMsg(m); break;
+  }
+}
+
+// ---- voice: one WebRTC audio link, signalled through the room ----
+function rtcClose(){ if (DUEL.pc) { try { DUEL.pc.close(); } catch (e) {} DUEL.pc = null; } DUEL.iceQ = []; const a = $('dAudio'); if (a) a.srcObject = null; }
+async function rtcStart(offer){
+  if (!window.RTCPeerConnection || !DUEL.opp) return;
+  rtcClose();
+  const pc = new RTCPeerConnection({ iceServers: [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302', 'stun:stun.cloudflare.com:3478'] }] });
+  DUEL.pc = pc;
+  const mic = await DUEL.micP; if (DUEL.pc !== pc) return pc;
+  if (mic) mic.getAudioTracks().forEach(t => { t.enabled = !DUEL.muted; pc.addTrack(t, mic); }); else pc.addTransceiver('audio', { direction: 'recvonly' });
+  pc.onicecandidate = ev => { if (ev.candidate && DUEL.opp) dSend({ to: DUEL.opp.id, t: 'rtc', f: DUEL.id, ice: ev.candidate }); };
+  pc.ontrack = ev => {
+    let a = $('dAudio'); if (!a) { a = document.createElement('audio'); a.id = 'dAudio'; a.autoplay = true; a.playsInline = true; document.body.appendChild(a); }
+    a.srcObject = ev.streams && ev.streams[0] ? ev.streams[0] : new MediaStream([ev.track]); const pr = a.play && a.play(); if (pr && pr.catch) pr.catch(() => {});
+  };
+  pc.onconnectionstatechange = () => { if (pc.connectionState === 'connected') chatAdd('', 'Voice connected' + (DUEL.mic ? ' · K mutes your mic' : ' · no mic, listening only'), 'sys'); else if (pc.connectionState === 'failed') chatAdd('', 'Voice could not connect on this network. Text chat still works.', 'sys'); };
+  if (offer) { const o = await pc.createOffer(); await pc.setLocalDescription(o); dSend({ to: DUEL.opp.id, t: 'rtc', f: DUEL.id, sdp: pc.localDescription }); }
+  return pc;
+}
+async function rtcMsg(m){
+  try {
+    if (m.sdp) {
+      let pc = DUEL.pc;
+      if (m.sdp.type === 'offer') pc = await rtcStart(false);
+      if (!pc) return;
+      await pc.setRemoteDescription(m.sdp);
+      if (m.sdp.type === 'offer') { const a = await pc.createAnswer(); await pc.setLocalDescription(a); dSend({ to: m.f, t: 'rtc', f: DUEL.id, sdp: pc.localDescription }); }
+      const q = DUEL.iceQ.splice(0); for (const c of q) { try { await pc.addIceCandidate(c); } catch (e) {} }
+    } else if (m.ice) {
+      const pc = DUEL.pc; if (pc && pc.remoteDescription) { try { await pc.addIceCandidate(m.ice); } catch (e) {} } else DUEL.iceQ.push(m.ice);
+    }
+  } catch (e) { console.warn('rtc', e); }
+}
+function duelMute(){ if (!DUEL.mic) { chatAdd('', 'No microphone: allow mic access and rejoin to talk.', 'sys'); return; } DUEL.muted = !DUEL.muted; DUEL.mic.getAudioTracks().forEach(t => t.enabled = !DUEL.muted); chatAdd('', DUEL.muted ? 'Mic muted' : 'Mic on', 'sys'); duelHud(); }
+
+// ---- text chat ----
+function chatOpen(){ const i = $('chatIn'); DUEL.typing = true; for (const k in keys) keys[k] = false; mouseL = mouseR = false; i.hidden = false; i.value = ''; i.focus(); }
+function chatClose(){ const i = $('chatIn'); if (!i) return; DUEL.typing = false; i.hidden = true; i.blur(); }
+$('chatIn').addEventListener('keydown', ev => {
+  ev.stopPropagation();
+  if (ev.key === 'Enter') { const t = $('chatIn').value.trim(); if (t) { dSend({ t: 'chat', f: DUEL.id, x: t.slice(0, 200) }); chatAdd(DUEL.name, t, 'me'); } chatClose(); ev.preventDefault(); }
+  else if (ev.key === 'Escape') chatClose();
+});
+$('chatIn').addEventListener('keyup', ev => ev.stopPropagation());
+addEventListener('keydown', ev => {
+  if (!DUEL.on || DUEL.typing || ev.target && ev.target.tagName === 'INPUT') return;
+  if (ev.code === 'Enter' && (state === 'playing' || state === 'dying')) { ev.preventDefault(); ev.stopImmediatePropagation(); chatOpen(); }
+  else if (ev.code === 'KeyK') { ev.stopImmediatePropagation(); duelMute(); }
+}, true);
+
+// ---- the opponent: a soldier puppet driven by their state packets ----
+function duelMakeAvatar(){
+  if (!soldierAsset || !DUEL.opp) return null;
+  forceType = 'rifle'; let e; try { e = spawnEnemy(); } finally { forceType = null; }
+  e.isDuel = true; e.T = Object.assign({}, e.T, { spd: 0 }); e.hp = 1e9;
+  const nm = DUEL.opp.name.toUpperCase();
+  const tex = canvasTex(256, 64, (g, w, h) => { g.clearRect(0, 0, w, h); g.font = '600 34px "Barlow Condensed", Arial Narrow, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.lineWidth = 6; g.strokeStyle = 'rgba(0,0,0,.7)'; g.strokeText(nm, w / 2, h / 2); g.fillStyle = '#ff6a3a'; g.fillText(nm, w / 2, h / 2); });
+  const tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true, fog: false })); tag.scale.set(1.6, 0.4, 1); tag.position.y = 2.25; tag.renderOrder = 30; e.g.add(tag);
+  DUEL.av = e; return e;
+}
+function duelDropOpp(){
+  const e = DUEL.av; DUEL.av = null; DUEL.opp = null; rtcClose();
+  if (e) { scene.remove(e.g); for (const m of e.parts) { const i = enemyParts.indexOf(m); if (i >= 0) enemyParts.splice(i, 1); } const i = enemies.indexOf(e); if (i >= 0) enemies.splice(i, 1); }
+}
+const _duq = V();
+function duelAvatarTick(e, dt){
+  const o = DUEL.opp, s = o && o.s;
+  if (e !== DUEL.av || !o) { return; }
+  const show = !!(s && !s.d && time - o.sT < 3);
+  if (!show) { e.g.visible = false; e.pos.set(SB.x, SB.y - 300, SB.z); e.g.position.copy(e.pos); return; }
+  if (!e.g.visible) { e.pos.set(s.x, s.y, s.z); e.yaw = s.yaw; }
+  e.g.visible = true;
+  const k = Math.min(1, dt * 14); _duq.set(s.x, s.y, s.z);
+  if (e.pos.distanceTo(_duq) > 6) e.pos.copy(_duq); else e.pos.lerp(_duq, k);
+  const dy = ((s.yaw - e.yaw + Math.PI) % TAU + TAU) % TAU - Math.PI; e.yaw += dy * k;
+  e.aimAmt = damp(e.aimAmt || 0, 1, 8, dt); e.aimPitch = clamp(s.pitch || 0, -1.2, 1.2); e.crouchAmt = damp(e.crouchAmt || 0, s.c || 0, 8, dt);
+  e.g.position.copy(e.pos); e.g.rotation.y = e.yaw;
+  e.nearCam = e.pos.distanceTo(P.pos) < 14;
+  e.animSpeed = damp(e.animSpeed || 0, s.sp || 0, 8, dt); animateEnemy(e, dt, e.animSpeed);
+  e.flashT = (e.flashT || 0) - dt; e.flash.visible = e.flashT > 0;
+}
+const _dA = V(), _dB = V();
+function duelPeerShot(s){
+  const e = DUEL.av; if (!e || !e.g.visible) return;
+  _dB.set(s[0], s[1], s[2]); e.flashT = 0.05; e.muzzle.getWorldPosition(_dA); tracer(_dA, _dB, C_TRACER_E);
+  if (time - (DUEL.sndT || 0) > 0.05) { DUEL.sndT = time; const rel = Math.atan2(-(e.pos.x - P.pos.x), -(e.pos.z - P.pos.z)) - P.yaw; sndShot(e.pos.distanceTo(P.pos), -Math.sin(rel) * 0.8); }
+}
+
+// ---- hits: the shooter finds the hit, the victim applies the damage ----
+const hitEnemy0 = hitEnemy;
+hitEnemy = (e, part, dist, dir, at, mul = 1, force = 1, ammo = null) => {
+  if (!e.isDuel) return hitEnemy0(e, part, dist, dir, at, mul, force, ammo);
+  if (DUEL.remote || !DUEL.opp || !e.g.visible || !DUEL.ws) return;
+  let dmg = (part === 'head' ? 150 : part === 'leg' ? 26 : 38) * mul; if (ammo && ammo.oneshot) dmg = 999;
+  if (!(ammo && ammo.noBlood)) { bloodSpray(at, dir, part === 'head' ? 14 : 8); bloodBurst(at, dir, part === 'head' ? 220 : 120, 6); hmT = 0.14; $('hm').classList.toggle('head', part === 'head'); sndTick(part === 'head'); }
+  if (DUEL.hq.length < 40) DUEL.hq.push([Math.round(dmg * 10) / 10, part, r2(dir.x), r2(dir.y), r2(dir.z), r2(at.x), r2(at.y), r2(at.z), r2(force)]);
+};
+function duelTakeHit(h){
+  if (state !== 'playing' || DUEL.deadSent) return;
+  const [dmg, part, dx, dy, dz, ax, ay, az, f] = h, o = DUEL.opp && DUEL.opp.s;
+  DUEL.lastHit = { part, dir: [dx, dy, dz], at: [ax, ay, az], force: f || 1, t: time };
+  const rel = o ? Math.atan2(-(o.x - P.pos.x), -(o.z - P.pos.z)) - P.yaw : 0;
+  bloodSpray(V(ax, ay, az), V(dx, dy, dz), 6); damagePlayer(dmg, rel);
+}
+function duelOppDied(m){
+  DUEL.me++;
+  const e = DUEL.av, s = DUEL.opp && DUEL.opp.s;
+  const pos = e && e.g.visible ? e.pos.clone() : s ? V(s.x, s.y, s.z) : null;
+  if (s) s.d = 1;
+  if (pos) {
+    forceType = 'rifle'; let c; try { c = spawnEnemy(); } finally { forceType = null; }
+    c.pos.copy(pos); c.yaw = e ? e.yaw : 0; c.T = Object.assign({}, c.T, { spd: 0 }); c.g.position.copy(c.pos); c.g.rotation.y = c.yaw;
+    animateEnemy(c, 0.016, 0); c.g.updateMatrixWorld(true);
+    const dir = m.dir ? V(m.dir[0], m.dir[1], m.dir[2]) : V(0, 0.3, 1), at = m.at ? V(m.at[0], m.at[1], m.at[2]) : pos.clone().add(V(0, 1.2, 0));
+    hitEnemy0(c, m.part || 'body', c.pos.distanceTo(P.pos), dir.normalize(), at, 9999, m.force || 2, { ap: true, oneshot: true });
+    if (e) { e.g.visible = false; e.pos.y = SB.y - 300; e.g.position.copy(e.pos); }
+  }
+  feed('<b>' + dEsc(DUEL.opp ? DUEL.opp.name : 'Opponent') + '</b> eliminated<span>' + DUEL.me + ' – ' + DUEL.them + '</span>');
+  duelCheckWin(); duelHud();
+}
+function duelCheckWin(){
+  if (DUEL.me < DUEL.goal && DUEL.them < DUEL.goal) return;
+  const won = DUEL.me >= DUEL.goal;
+  banner(won ? 'You win' : 'You lose', DUEL.me + ' – ' + DUEL.them + ' · next round starts now');
+  chatAdd('', (won ? 'You won ' : (DUEL.opp ? DUEL.opp.name : 'Opponent') + ' won ') + DUEL.me + '–' + DUEL.them + '. New round.', 'sys');
+  DUEL.me = DUEL.them = 0;
+}
+
+// ---- spawning, respawning, ammo ----
+function duelSpawnPoint(){
+  const side = DUEL.host ? 1 : -1, x = SB.x + (rand() - 0.5) * 16;
+  return { x, z: SB.z + side * (36 + rand() * 4), yaw: side > 0 ? 0 : Math.PI };
+}
+function duelPlace(){
+  const sp = duelSpawnPoint(); P.pos.set(sp.x, SB.y, sp.z); P.vel.set(0, 0, 0); P.yaw = sp.yaw; P.pitch = 0;
+}
+function duelArm(){ WEAPONS.forEach(w => { w.owned = true; AMMO[w.id] = { mag: w.cap, reserve: w.cap * 4 }; }); P.mag = WPN.cap; P.reserve = WPN.cap * 4; nadeCount = 3; }
+function duelStart(){
+  sbApply(); duelArena(true); if (crate) { scene.remove(crate.g); crate = null; }
+  wave = 1; bz = bzTarget = 0; setNightTarget(0);
+  DUEL.av = null; DUEL.deadSent = false; DUEL.hq.length = 0;
+  duelPlace(); duelArm();
+  banner('1v1', DUEL.opp ? DUEL.name + ' vs ' + DUEL.opp.name + ' · first to ' + DUEL.goal : 'Waiting for an opponent · room ' + DUEL.room);
+  duelHud();
+}
+function duelRespawn(){
+  clearCorpses();
+  Object.assign(P, { hp: 100, lastHurt: -99, deathT: 0, roll: 0, reload: 0, fireCd: 0, crouchT: 0, ads: 0, sprintT: 0, lean: 0, bloom: 0 });
+  duelPlace(); duelArm(); camera.rotation.set(0, 0, 0);
+  DUEL.deadSent = false; DUEL.lastHit = null;
+  state = 'playing'; showPanel(null); $('hud').hidden = false;
+}
+function duelTick(dt){
+  if (!DUEL.on) return;
+  if (DUEL.opp && !DUEL.av && soldierAsset && state !== 'menu') duelMakeAvatar();
+  // I died: tell them (they score), whatever killed me
+  if (state === 'dying' && !DUEL.deadSent) {
+    DUEL.deadSent = true; DUEL.them++;
+    const lh = DUEL.lastHit && time - DUEL.lastHit.t < 1.5 ? DUEL.lastHit : null;
+    dSend({ t: 'died', f: DUEL.id, part: lh ? lh.part : 'body', dir: lh ? lh.dir : [0, 0.4, 1], at: lh ? lh.at : [r2(P.pos.x), r2(P.pos.y + 1.2), r2(P.pos.z)], force: lh ? lh.force : 2 });
+    feed('<b>You</b> went down<span>' + DUEL.me + ' – ' + DUEL.them + '</span>');
+    duelCheckWin(); duelHud();
+  }
+  if (DUEL.hq.length && DUEL.opp) dSend({ to: DUEL.opp.id, t: 'hit', f: DUEL.id, h: DUEL.hq.splice(0) });
+  else DUEL.hq.length = 0;
+  const live = state === 'playing' || state === 'dying' || state === 'paused';
+  DUEL.sendT -= dt;
+  if (live && DUEL.sendT <= 0) {
+    DUEL.sendT = 1 / 15;
+    dSend({ t: 'p', f: DUEL.id, x: r2(P.pos.x), y: r2(P.pos.y), z: r2(P.pos.z), yaw: r2(P.yaw), pitch: r2(P.pitch), c: r2(P.crouchT), sp: r2(P.speedNow || 0), d: state === 'dying' || P.hp <= 0 ? 1 : 0, sh: DUEL.shots.splice(0, 6) });
+  }
+  if (state === 'playing') {
+    P.reserve = Math.max(P.reserve, WPN.cap * 4);
+    for (const w of WEAPONS) if (AMMO[w.id] && w !== WPN) AMMO[w.id].reserve = Math.max(AMMO[w.id].reserve, w.cap * 4);
+    if (nadeCount < 3) nadeCount = 3;
+  }
+}
+
+// ---- hooks into the game ----
+netNoteShot = hp => { if (DUEL.on && DUEL.shots.length < 6) DUEL.shots.push([r2(hp.x), r2(hp.y), r2(hp.z)]); };
+netUpdate = dt => { if (DUEL.on) duelTick(dt); };
+{ const s0 = startWave; startWave = n => { if (DUEL.on) duelStart(); else s0(n); }; }
+{ const w0 = updateWaves; updateWaves = dt => { if (!DUEL.on) w0(dt); }; }
+{ const u0 = updateEnemy; updateEnemy = (e, dt) => { if (e.isDuel) duelAvatarTick(e, dt); else u0(e, dt); }; }
+{ const d0 = damagePlayer; damagePlayer = (d, rel) => { if (!DUEL.on) return d0(d, rel); if (DUEL.remote || DUEL.deadSent) return; SB.hurt = true; try { d0(d, rel); } finally { SB.hurt = false; } }; }
+{ const x0 = explode; explode = (p, owner, fromNet) => { if (DUEL.on && !fromNet && !DUEL.remote && !DUEL.nuking) dSend({ t: 'boom', f: DUEL.id, p: [r2(p.x), r2(p.y), r2(p.z)] }); return x0(p, owner, fromNet); }; }
+{ const n0 = rpgNuke; rpgNuke = p => { if (DUEL.on && !DUEL.remote) { dSend({ t: 'nuke', f: DUEL.id, p: [r2(p.x), r2(p.y), r2(p.z)] }); DUEL.nuking = true; try { return n0(p); } finally { DUEL.nuking = false; } } return n0(p); }; }
+{ const die0 = die; die = () => { if (DUEL.on) { duelRespawn(); return; } die0(); }; }
+// menu wiring
+document.addEventListener('click', ev => {
+  const id = ev.target && ev.target.id;
+  if (id === 'duelBtn') { showPanel('pDuel'); duelStatus('Share the room code (or the invite link) with your opponent.'); }
+  else if (id === 'dBack') { if (!DUEL.on) duelLeave(); showPanel('pMain'); }
+  else if (id === 'dGo') {
+    initAudio(); duelJoin($('dCode').value, $('dName').value);
+    DUEL.on = true; SB.on = true; SBR.resetT = 0; sbApply(); duelArena(true); enterPlay(true);
+  }
+  else if ((id === 'play' || id === 'cont' || id === 'cont2' || id === 'sbBtn' || id === 'sbQuit') && (DUEL.on || DUEL.ws)) { duelLeave(); if (id === 'sbQuit') duelHud(); }
+}, true);
+if (new URLSearchParams(location.search).get('duel')) setTimeout(() => { if (state === 'menu') showPanel('pDuel'); }, 0);
+
 window.__WO = { setPose(x, z, yaw, pitch){ P.pos.set(x, heightAt(x, z), z); P.yaw = yaw; P.pitch = pitch; }, spawn(n){ for (let i = 0; i < n; i++) spawnEnemy(); }, enemies, P, get state(){ return state; }, info(){ return renderer.info.render; }, GRIP, feat(){ return { raycaster, enemyParts, coverMeshes, rayTerrain, NIGHT, setNightTarget, FL, AXE, throwAxe, FIRE, NET, TH, WS, cycleThermal, FUN, barrels, damageBarrel, loot, get keys(){ return keys; }, heightAt, get trailCount(){ return trailMesh.count; }, rockets, ragImpulse, RI, spawnSled, spawnHeli, HELI, VEH, vehDamage, SM, fellTree, trees, KC, fallen, startKillCam, smToggle, get lastKill(){ return lastKill; }, startWave, WEAPONS, setWeapon, spawnCrate, explode, applyWeaponLook, setBz(v){ bz = bzTarget = v; }, setWave(n){ wave = n; } }; }, fpInfo(){ return fp ? { tris: fp.tris, ms: fp.ms } : null; }, gun, kill(i, part){ const e = enemies[i]; if (!e) return; const at = V(); e.bones[part === 'head' ? 'Head' : part === 'leg' ? 'LeftLeg' : 'Spine2'].getWorldPosition(at); const dir = at.clone().sub(camera.position).normalize(); e.hp = 1; hitEnemy(e, part, at.distanceTo(camera.position), dir, at); }, step(n, d){ for (let i = 0; i < n; i++) loop(d || 0.033); } };
 loop();
 })();
