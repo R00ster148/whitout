@@ -4863,7 +4863,7 @@ function duelMsg(m){
   }
   if (!DUEL.opp || m.f !== DUEL.opp.id) return;
   switch (m.t) {
-    case 'p': DUEL.opp.s = m; DUEL.opp.sT = time; if (m.sh) for (const s of m.sh) duelPeerShot(s); break;
+    case 'p': duelSnap(DUEL.opp, m); if (m.sh) for (const s of m.sh) duelPeerShot(s); break;
     case 'hit': for (const h of m.h) duelTakeHit(h); break;
     case 'died': duelOppDied(m); break;
     case 'boom': DUEL.remote = true; try { explode(V(m.p[0], m.p[1], m.p[2]), 'player', true); } finally { DUEL.remote = false; } break;
@@ -4973,20 +4973,49 @@ function duelDropOpp(){
   if (e) { scene.remove(e.g); for (const m of e.parts) { const i = enemyParts.indexOf(m); if (i >= 0) enemyParts.splice(i, 1); } const i = enemies.indexOf(e); if (i >= 0) enemies.splice(i, 1); }
 }
 const _duq = V();
+// snapshot buffer: play the opponent back ~110 ms behind their own clock, interpolating between packets,
+// so network jitter never shows up as stutter or rubber-banding
+const DUEL_DELAY = 110;
+function duelSnap(o, m){
+  const now = performance.now();
+  o.s = m; o.sT = time; o.rT = now;
+  if (typeof m.ts !== 'number') m.ts = now;
+  const off = now - m.ts;
+  if (o.off === undefined || off < o.off) o.off = off; else o.off += (off - o.off) * 0.01;
+  let b = o.buf || (o.buf = []);
+  if (b.length && m.ts <= b[b.length - 1].ts) return;
+  // respawned or teleported: start the buffer again instead of sliding across the map
+  const L = b[b.length - 1]; if (m.d || (L && Math.hypot(m.x - L.x, m.z - L.z) > 8)) { b.length = 0; if (m.d) return; }
+  b.push({ ts: m.ts, x: m.x, y: m.y, z: m.z, yaw: m.yaw, pitch: m.pitch || 0, c: m.c || 0, sp: m.sp || 0 });
+  if (b.length > 40) b.shift();
+}
+const angLerp = (a, b, t) => a + ((((b - a + Math.PI) % TAU) + TAU) % TAU - Math.PI) * t;
+function duelSample(o, out){
+  const b = o.buf; if (!b || !b.length) return false;
+  const rt = performance.now() - o.off - DUEL_DELAY;
+  let i = b.length - 1; while (i > 0 && b[i - 1].ts > rt) i--;
+  const A = i > 0 ? b[i - 1] : b[0], B = b[i];
+  if (rt >= b[b.length - 1].ts) {
+    // past the newest packet: extrapolate a little, then hold
+    const L = b[b.length - 1], K = b.length > 1 ? b[b.length - 2] : L, span = Math.max(L.ts - K.ts, 1), ex = Math.min(rt - L.ts, 150) / span;
+    out.x = L.x + (L.x - K.x) * ex; out.y = L.y + (L.y - K.y) * ex; out.z = L.z + (L.z - K.z) * ex; out.yaw = L.yaw; out.pitch = L.pitch; out.c = L.c; out.sp = L.sp; return true;
+  }
+  const t = B.ts > A.ts ? clamp((rt - A.ts) / (B.ts - A.ts), 0, 1) : 1;
+  out.x = lerp(A.x, B.x, t); out.y = lerp(A.y, B.y, t); out.z = lerp(A.z, B.z, t); out.yaw = angLerp(A.yaw, B.yaw, t); out.pitch = lerp(A.pitch, B.pitch, t); out.c = lerp(A.c, B.c, t); out.sp = lerp(A.sp, B.sp, t);
+  return true;
+}
+const _dsm = {};
 function duelAvatarTick(e, dt){
   const o = DUEL.opp, s = o && o.s;
   if (e !== DUEL.av || !o) { return; }
-  const show = !!(s && !s.d && time - o.sT < 3);
+  const show = !!(s && !s.d && performance.now() - (o.rT || 0) < 3000) && duelSample(o, _dsm);
   if (!show) { e.g.visible = false; e.pos.set(0, -500, 0); e.g.position.copy(e.pos); return; }
-  if (!e.g.visible) { e.pos.set(s.x, s.y, s.z); e.yaw = s.yaw; }
   e.g.visible = true;
-  const k = Math.min(1, dt * 14); _duq.set(s.x, s.y, s.z);
-  if (e.pos.distanceTo(_duq) > 6) e.pos.copy(_duq); else e.pos.lerp(_duq, k);
-  const dy = ((s.yaw - e.yaw + Math.PI) % TAU + TAU) % TAU - Math.PI; e.yaw += dy * k;
-  e.aimAmt = damp(e.aimAmt || 0, 1, 8, dt); e.aimPitch = clamp(s.pitch || 0, -1.2, 1.2); e.crouchAmt = damp(e.crouchAmt || 0, s.c || 0, 8, dt);
+  e.pos.set(_dsm.x, _dsm.y, _dsm.z); e.yaw = _dsm.yaw;
+  e.aimAmt = damp(e.aimAmt || 0, 1, 8, dt); e.aimPitch = clamp(_dsm.pitch, -1.2, 1.2); e.crouchAmt = _dsm.c;
   e.g.position.copy(e.pos); e.g.rotation.y = e.yaw;
   e.nearCam = e.pos.distanceTo(P.pos) < 14;
-  e.animSpeed = damp(e.animSpeed || 0, s.sp || 0, 8, dt); animateEnemy(e, dt, e.animSpeed);
+  e.animSpeed = damp(e.animSpeed || 0, _dsm.sp, 10, dt); animateEnemy(e, dt, e.animSpeed);
   e.flashT = (e.flashT || 0) - dt; e.flash.visible = e.flashT > 0;
 }
 const _dA = V(), _dB = V();
@@ -5082,8 +5111,8 @@ function duelTick(dt){
   const live = state === 'playing' || state === 'dying' || state === 'paused';
   DUEL.sendT -= dt;
   if (live && DUEL.sendT <= 0) {
-    DUEL.sendT = 1 / 15;
-    dSend({ t: 'p', f: DUEL.id, mu: !DUEL.mic || DUEL.muted ? 1 : 0, x: r2(P.pos.x), y: r2(P.pos.y), z: r2(P.pos.z), yaw: r2(P.yaw), pitch: r2(P.pitch), c: r2(P.crouchT), sp: r2(P.speedNow || 0), d: state === 'dying' || P.hp <= 0 ? 1 : 0, sh: DUEL.shots.splice(0, 6) });
+    DUEL.sendT = 1 / 20;
+    dSend({ t: 'p', f: DUEL.id, ts: Math.round(performance.now()), mu: !DUEL.mic || DUEL.muted ? 1 : 0, x: r2(P.pos.x), y: r2(P.pos.y), z: r2(P.pos.z), yaw: r2(P.yaw), pitch: r2(P.pitch), c: r2(P.crouchT), sp: r2(P.speedNow || 0), d: state === 'dying' || P.hp <= 0 ? 1 : 0, sh: DUEL.shots.splice(0, 6) });
   }
   if (state === 'playing') {
     P.reserve = Math.max(P.reserve, WPN.cap * 4);
