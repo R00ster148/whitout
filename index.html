@@ -2101,7 +2101,7 @@ function updateBlobs(){
 
 // ================= weapons: CIWS carbine, scoped DMR (same receiver), M134-style handheld minigun =================
 const WEAPONS = [
-  { id: 'ciws', name: '5.56 · 3,600 RPM', short: 'CIWS', rate: 0.0167, auto: true, pellets: 1, dmg: 0.62, spread: 1, cone: 0, cap: 500, recoil: 0.28, zoom: 42, force: 1, muzzle: -0.506, owned: true },
+  { id: 'ciws', name: '5.56 · 3,600 RPM', short: 'CIWS', rate: 0.0167, auto: true, pellets: 1, dmg: 0.62, spread: 0.45, cone: 0, cap: 500, recoil: 0.2, zoom: 42, force: 1, muzzle: -0.506, owned: true },
   { id: 'pistol', name: '9 mm · 17-round sidearm', short: 'PISTOL', rate: 0.11, auto: false, pellets: 1, dmg: 1.5, spread: 0.55, cone: 0, cap: 17, recoil: 1.5, zoom: 58, force: 1.3, muzzle: -0.076, muzzleY: -0.002, sightY: 0.0245, adsZ: -0.38, oneHand: true, owned: true },
   { id: 'dmr', name: '7.62 DMR · 4× scope', short: 'DMR', rate: 0.2, auto: false, pellets: 1, dmg: 2.8, spread: 0.18, cone: 0, cap: 20, recoil: 2.3, zoom: 13, force: 2.4, muzzle: -0.68, owned: false },
   { id: 'sniper50', name: '.50 cal · anti-materiel · 12×', short: '.50 CAL', rate: 1.35, auto: false, pellets: 1, dmg: 40, spread: 0.04, cone: 0, cap: 5, recoil: 5, zoom: 6, force: 9, muzzle: -0.745, owned: false, oneshot: true, pen: true },
@@ -3627,12 +3627,35 @@ function updateGibs(dt){
   }
 }
 // bodies stay where they fell until the next wave starts
+function disposeSoldier(e){ try { e.g.traverse(o => { if (o.isSkinnedMesh && o.skeleton && o.skeleton.boneTexture) { o.skeleton.boneTexture.dispose(); o.skeleton.boneTexture = null; } }); } catch (err) {} }
+// keep only the newest few bodies (multiplayer kills pile up fast) and drop anything that has gone non-finite
+function trimCorpses(keep){
+  const dead = enemies.filter(e => e.dead && !e.isDuel);
+  for (let k = 0; k < dead.length - keep; k++) removeEnemyNow(dead[k]);
+}
+function removeEnemyNow(e){
+  const i = enemies.indexOf(e); if (i < 0) return;
+  for (const m of e.parts) { const j = enemyParts.indexOf(m); if (j >= 0) enemyParts.splice(j, 1); }
+  scene.remove(e.g); if (e.rifleDropped) scene.remove(e.rifle); if (e.glint) scene.remove(e.glint); if (e.laser) scene.remove(e.laser);
+  disposeSoldier(e); enemies.splice(i, 1);
+}
+function sanitizeWorld(){
+  for (let i = enemies.length - 1; i >= 0; i--) {
+    const e = enemies[i];
+    let bad = !isFinite(e.pos.x + e.pos.y + e.pos.z);
+    if (!bad && e.rag) for (let k = 0; k < e.rag.p.length; k += 3) if (!isFinite(e.rag.p[k])) { bad = true; break; }
+    if (bad) { if (e.isDuel) { e.pos.set(0, -500, 0); if (e.g) { e.g.visible = false; e.g.position.copy(e.pos); } } else removeEnemyNow(e); }
+  }
+  if (gibs.length > 60) for (const g of gibs.splice(0, gibs.length - 60)) scene.remove(g.m);
+  if (!isFinite(P.pos.x + P.pos.y + P.pos.z)) { P.pos.set(0, heightAt(0, 0), 0); P.vel.set(0, 0, 0); }
+  if (!isFinite(P.yaw)) P.yaw = 0; if (!isFinite(P.pitch)) P.pitch = 0;
+}
 function clearCorpses(){
   for (let i = enemies.length - 1; i >= 0; i--) {
     const e = enemies[i]; if (!e.dead) continue;
     for (const m of e.parts) { const j = enemyParts.indexOf(m); if (j >= 0) enemyParts.splice(j, 1); }
     scene.remove(e.g); if (e.rifleDropped) scene.remove(e.rifle); if (e.glint) scene.remove(e.glint); if (e.laser) scene.remove(e.laser);
-    enemies.splice(i, 1);
+    disposeSoldier(e); enemies.splice(i, 1);
   }
   for (const g of gibs) scene.remove(g.m); gibs.length = 0;
   resetAxes();
@@ -3992,7 +4015,7 @@ function fire(){
   _o.copy(camera.position); const fwd = V(0, 0, -1).applyQuaternion(camera.quaternion);
   _r.set(1, 0, 0).applyQuaternion(camera.quaternion); _u.set(0, 1, 0).applyQuaternion(camera.quaternion);
   const mz = muzzleWorld(V()); if (w.id === 'rpg') { launchRocket(mz, fwd); return; } if (w.id === 'flamer') { flameTick(mz, fwd); return; }
-  P.bloom = Math.min(P.bloom + (w.id === 'minigun' ? 0.0005 : 0.005), w.id === 'minigun' ? 0.008 : 0.035);
+  P.bloom = Math.min(P.bloom + (w.id === 'minigun' ? 0.0005 : w.id === 'ciws' ? 0.0004 : 0.005), w.id === 'minigun' ? 0.008 : w.id === 'ciws' ? 0.005 : 0.035);
   let firstBest = 500;
   for (let pi = 0; pi < w.pellets; pi++) {
     _d.copy(fwd);
@@ -4414,6 +4437,9 @@ class WeaponPass extends THREE.Pass {
   render(r, w, read){ const ac = r.autoClear; r.autoClear = false; r.setRenderTarget(read); if (window.__onlyWeapon) { r.setClearColor(0x58626e, 1); r.clear(); r.setClearColor(0x000000, 0); } r.clearDepth(); r.render(wScene, wCam); r.autoClear = ac; }
 }
 let composer, renderPass, weaponPass, raysPass, bloomPass, finalPass;
+const SanitizeShader = { uniforms: { tDiffuse: { value: null } },
+  vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+  fragmentShader: 'uniform sampler2D tDiffuse; varying vec2 vUv; void main(){ vec4 c = texture2D(tDiffuse, vUv); if (!(c.r == c.r) || !(c.g == c.g) || !(c.b == c.b) || !(c.a == c.a)) c = vec4(0.0, 0.0, 0.0, 1.0); gl_FragColor = vec4(clamp(c.rgb, 0.0, 60000.0), clamp(c.a, 0.0, 1.0)); }' };
 function buildComposer(){
   if (composer) { composer.renderTarget1.dispose(); composer.renderTarget2.dispose(); if (bloomPass) bloomPass.dispose && bloomPass.dispose(); }
   const pr = Math.min(Q.pr, window.devicePixelRatio || 1) || 1, w = innerWidth, h = innerHeight;
@@ -4429,7 +4455,7 @@ function buildComposer(){
   raysPass = new THREE.ShaderPass(GodRayShader);
   bloomPass = new THREE.UnrealBloomPass(new THREE.Vector2(w * Q.bloom, h * Q.bloom), 0.55, 0.65, 2.0);
   finalPass = new THREE.ShaderPass(FinalShader);
-  composer.addPass(renderPass); composer.addPass(weaponPass); composer.addPass(raysPass); composer.addPass(bloomPass); composer.addPass(finalPass);
+  composer.addPass(renderPass); composer.addPass(weaponPass); composer.addPass(raysPass); composer.addPass(new THREE.ShaderPass(SanitizeShader)); composer.addPass(bloomPass); composer.addPass(finalPass);
   thermalPass = new THREE.ShaderPass(ThermalShader); thermalPass.enabled = false; composer.addPass(thermalPass); ensureThermalRT();
   raysPass.enabled = Q.rays;
   finalPass.uniforms.res.value.set(w * pr, h * pr); finalPass.uniforms.aspect.value = w / h; raysPass.uniforms.aspect.value = w / h;
@@ -4825,13 +4851,27 @@ function duelJoin(code, name){
   let ws; try { ws = new WebSocket(duelUrl(code) + '?name=' + encodeURIComponent(DUEL.name)); } catch (e) { duelStatus('Could not open a connection here.'); return; }
   DUEL.ws = ws;
   ws.onmessage = ev => { let m; try { m = JSON.parse(ev.data); } catch (e) { return; } try { duelMsg(m); } catch (e) { console.warn('ffa', e); } };
-  ws.onclose = () => { if (DUEL.ws !== ws) return; const was = DUEL.joined; DUEL.ws = null; if (was) { chatAdd('', 'Disconnected from the game server.', 'sys'); duelDropAll(); duelHud(); } else { duelStatus('Could not reach the game server. Try again in a moment.'); chatAdd('', 'Could not reach the game server. You are alone on the ridge.', 'sys'); } };
+  ws.onclose = () => { if (DUEL.ws !== ws) return; const was = DUEL.joined; DUEL.ws = null; if (was) { duelDropAll(); duelHud(); duelReconnect(); } else { duelStatus('Could not reach the game server. Try again in a moment.'); chatAdd('', 'Could not reach the game server. You are alone on the ridge.', 'sys'); } };
   ws.onerror = () => {};
+}
+function duelReconnect(){
+  if (!DUEL.on) return;
+  DUEL.retries = (DUEL.retries || 0) + 1;
+  if (DUEL.retries > 8) { chatAdd('', 'Lost the connection to the game server.', 'sys'); return; }
+  chatAdd('', 'Connection dropped · reconnecting…', 'sys');
+  setTimeout(() => {
+    if (!DUEL.on || DUEL.ws) return;
+    let ws; try { ws = new WebSocket(duelUrl(DUEL.room) + '?name=' + encodeURIComponent(DUEL.name)); } catch (e) { duelReconnect(); return; }
+    DUEL.ws = ws; DUEL.rejoin = true;
+    ws.onmessage = ev => { let m; try { m = JSON.parse(ev.data); } catch (e) { return; } try { duelMsg(m); } catch (e) { console.warn('ffa', e); } };
+    ws.onclose = () => { if (DUEL.ws !== ws) return; DUEL.ws = null; duelDropAll(); duelHud(); duelReconnect(); };
+    ws.onerror = () => {};
+  }, Math.min(1000 * DUEL.retries, 5000));
 }
 function duelLeave(quiet){
   const ws = DUEL.ws; DUEL.ws = null; if (ws) { try { ws.close(); } catch (e) {} }
   duelDropAll(); DUEL.lMeter = null; if (DUEL.mic) { DUEL.mic.getTracks().forEach(t => t.stop()); DUEL.mic = null; }
-  DUEL.on = false; DUEL.joined = false; DUEL.kills = DUEL.deaths = 0; chatClose(); duelHud();
+  DUEL.on = false; DUEL.joined = false; DUEL.rejoin = false; DUEL.retries = 0; DUEL.kills = DUEL.deaths = 0; chatClose(); duelHud();
   if (!quiet) { try { const u = new URL(location.href); u.searchParams.delete('duel'); history.replaceState(null, '', u.toString()); } catch (e) {} }
 }
 function duelFull(){
@@ -4839,7 +4879,7 @@ function duelFull(){
   if (document.exitPointerLock && document.pointerLockElement) document.exitPointerLock();
   showPanel('pDuel'); duelStatus('That room is full (' + DUEL.max + ' players). Pick another code.');
 }
-function inviteLink(){ const u = new URL(location.href); u.search = ''; u.searchParams.set('duel', DUEL.room); return u.toString(); }
+function inviteLink(){ const u = new URL(location.href), w = u.searchParams.get('ws'); u.search = ''; u.searchParams.set('duel', DUEL.room); if (w) u.searchParams.set('ws', w); return u.toString(); }
 function addPeer(id, name){
   if (id === DUEL.id) return null;
   let p = DUEL.peers.get(id); if (p) return p;
@@ -4850,7 +4890,7 @@ function addPeer(id, name){
 function removePeer(id){
   const p = DUEL.peers.get(id); if (!p) return;
   rtcClose(p); if (p.sled) scene.remove(p.sled);
-  const e = p.av; if (e) { scene.remove(e.g); for (const m of e.parts) { const i = enemyParts.indexOf(m); if (i >= 0) enemyParts.splice(i, 1); } const i = enemies.indexOf(e); if (i >= 0) enemies.splice(i, 1); }
+  const e = p.av; if (e) { disposeSoldier(e); scene.remove(e.g); for (const m of e.parts) { const i = enemyParts.indexOf(m); if (i >= 0) enemyParts.splice(i, 1); } const i = enemies.indexOf(e); if (i >= 0) enemies.splice(i, 1); }
   DUEL.peers.delete(id); DUEL.hq.delete(id);
 }
 function duelDropAll(){ for (const id of [...DUEL.peers.keys()]) removePeer(id); }
@@ -4864,10 +4904,12 @@ function duelMsg(m){
       try { history.replaceState(null, '', inviteLink()); } catch (e) {}
       duelStatus('In room <b>' + DUEL.room + '</b> · <a href="#" id="dCopy">copy invite link</a>');
       const c = $('dCopy'); if (c) c.onclick = ev => { ev.preventDefault(); const l = inviteLink(); try { navigator.clipboard.writeText(l); c.textContent = 'copied'; } catch (e) { prompt('Invite link', l); } };
-      DUEL.joined = true; if (state === 'playing' || state === 'paused') duelRespawn();
+      const wasRejoin = DUEL.rejoin; DUEL.rejoin = false; DUEL.retries = 0;
+      if (wasRejoin) chatAdd('', 'Reconnected.', 'sys');
+      DUEL.joined = true; if (!wasRejoin && (state === 'playing' || state === 'paused')) duelRespawn();
       chatAdd('', m.peers.length ? 'Joined room ' + DUEL.room + ' · ' + m.peers.map(q => q.name).join(', ') + (m.peers.length > 1 ? ' are' : ' is') + ' here. Fight!' : 'Room ' + DUEL.room + ' · waiting for players. Send them the code.', 'sys');
       // ask everyone for the scores so far
-      dSend({ t: 'hello', f: DUEL.id });
+      dSend({ t: 'hello', f: DUEL.id }); if (wasRejoin) dSend({ t: 'score', f: DUEL.id, k: DUEL.kills, d: DUEL.deaths });
       duelHud(); return;
     }
     case 'join': {
@@ -4991,7 +5033,7 @@ function voiceTalking(v, dt){
 }
 // snapshot buffer: play each player back ~110 ms behind their own clock, interpolating between packets,
 // so network jitter never shows up as stutter or rubber-banding
-const DUEL_DELAY = 110;
+const DUEL_DELAY = 140;
 function duelSnap(o, m){
   const now = performance.now();
   o.s = m; o.rT = now;
@@ -5026,7 +5068,7 @@ function duelSledTick(o){
   const fresh = o.s && performance.now() - (o.rT || 0) < 3000;
   const sm = fresh ? (_dsm.sm && !o.s.d ? _dsm.sm : o.s.sm) : null;
   if (!sm) { if (o.sled) o.sled.visible = false; return; }
-  if (!o.sled) { o.sled = SM.g.clone(true); o.sled.traverse(c => { if (c.isLight) c.visible = false; }); scene.add(o.sled); }
+  if (!o.sled) { o.sled = SM.g.clone(true); const ls = []; o.sled.traverse(c => { if (c.isLight) ls.push(c); }); for (const l of ls) l.parent.remove(l); scene.add(o.sled); }
   o.sled.visible = true; o.sled.position.set(sm[0], sm[1], sm[2]); o.sled.rotation.set(sm[4], sm[3], sm[5], 'YXZ');
 }
 function duelAvatarTick(e, dt){
@@ -5088,6 +5130,7 @@ function duelPeerDied(p, m){
     try { hitEnemy0(c, m.part || 'body', c.pos.distanceTo(P.pos), dir.normalize(), at, 9999, m.force || 2, { ap: true, oneshot: true }); }
     finally { NET.on = no; NET.curKiller = nk; }
     if (e) { e.g.visible = false; e.pos.y = -500; e.g.position.copy(e.pos); }
+    trimCorpses(4);
   }
   feed(byMe ? '<b>You</b> killed <b>' + dEsc(p.name) + '</b><span>' + DUEL.kills + ' kills</span>'
     : killer ? '<b>' + dEsc(killer.name) + '</b> killed <b>' + dEsc(p.name) + '</b>' : '<b>' + dEsc(p.name) + '</b> died');
@@ -5146,6 +5189,7 @@ function duelRespawn(){
 }
 function duelTick(dt){
   if (!DUEL.on) return;
+  DUEL.hkT = (DUEL.hkT || 0) - dt; if (DUEL.hkT <= 0) { DUEL.hkT = 1; sanitizeWorld(); trimCorpses(6); }
   if (DUEL.mic && !DUEL.lMeter) DUEL.lMeter = voiceMeter(DUEL.mic);
   let changed = false;
   const selfMode = !DUEL.mic || DUEL.muted ? 'muted' : voiceTalking(DUEL.lMeter, dt) ? 'talk' : 'none';
@@ -5170,7 +5214,10 @@ function duelTick(dt){
   const live = state === 'playing' || state === 'dying' || state === 'paused';
   DUEL.sendT -= dt;
   if (live && DUEL.sendT <= 0) {
-    DUEL.sendT = 1 / 20;
+    // 15 updates a second while moving or shooting, 4 while standing still
+    const busy = DUEL.shots.length || (P.speedNow || 0) > 0.2 || SM.on || SM.air || Math.abs(P.yaw - (DUEL.lastYaw || 0)) > 0.002 || state !== 'playing';
+    DUEL.lastYaw = P.yaw;
+    DUEL.sendT = busy ? 1 / 15 : 1 / 4;
     dSend({ t: 'p', f: DUEL.id, n: DUEL.name, ts: Math.round(performance.now()), sm: [r2(SM.pos.x), r2(SM.pos.y), r2(SM.pos.z), r2(SM.yaw), r2(SM.pitch), r2(SM.roll), SM.on ? 1 : 0], mu: !DUEL.mic || DUEL.muted ? 1 : 0, x: r2(P.pos.x), y: r2(P.pos.y), z: r2(P.pos.z), yaw: r2(P.yaw), pitch: r2(P.pitch), c: r2(P.crouchT), sp: r2(P.speedNow || 0), d: state === 'dying' || P.hp <= 0 ? 1 : 0, sh: DUEL.shots.splice(0, 6) });
   }
   if (state === 'playing') {
@@ -5230,6 +5277,133 @@ if (new URLSearchParams(location.search).get('duel')) setTimeout(() => { if (sta
     else if (t.id === 'setReset') { Object.assign(SET, { sens: 1, fov: 72, inv: false, master: 1, wind: 1, voice: 1 }); save(); sync(); apply(); }
   }, true);
 }
+// ================= controller support (PlayStation / Xbox pads via the Gamepad API) =================
+// Standard mapping: 0 ✕/A, 1 ○/B, 2 □/X, 3 △/Y, 4 L1, 5 R1, 6 L2, 7 R2, 8 Create/Share, 9 Options, 10 L3, 11 R3, 12-15 d-pad, 16 PS, 17 touchpad
+const PAD = { active: false, idx: -1, prev: [], lastT: 0, snapT: 0, ads: false, shots: 0, hp: 100, rumbleT: 0, navT: 0, focus: null };
+{
+  const css = document.createElement('style');
+  css.textContent = '.padFocus{outline:2px solid var(--blaze)!important;outline-offset:3px}#padNote{margin:0;font:400 12px/1.6 var(--f-mono);color:var(--frost)}#padNote b{color:var(--ice);font-weight:600}';
+  document.head.appendChild(css);
+  const n = document.createElement('p'); n.id = 'padNote';
+  n.innerHTML = '<b>Controller</b> (PlayStation or Xbox): R2 fire · L2 aim · L3 sprint · ✕ jump · ○ crouch / slide · □ reload · △ next weapon · L1 grenade · R1 axe · D-pad ↑ snowmobile ↓ torch ← ammo → fire mode · Create thermal · R3 mute mic · Options pause. In menus: D-pad to move, ✕ to select, ○ to go back.';
+  const keysEl = document.querySelector('#pMain .keys'); if (keysEl) keysEl.after(n);
+}
+function padKey(code, down){ dispatchEvent(new KeyboardEvent(down ? 'keydown' : 'keyup', { code, key: code, bubbles: true })); }
+function padRumble(gp, strong, weak, ms){
+  const a = gp && gp.vibrationActuator; if (!a || !a.playEffect) return;
+  try { a.playEffect('dual-rumble', { duration: ms, strongMagnitude: strong, weakMagnitude: weak }); } catch (e) {}
+}
+// aim assist: the nearest target near the crosshair, in screen space
+const _pa = V(), _pb = V();
+function padTarget(maxNdc){
+  let best = null, bd = maxNdc;
+  const list = enemies.filter(e => !e.dead && e.g.visible !== false && e.pos.y > -100);
+  for (const e of list) {
+    if (e.pos.distanceTo(camera.position) > 160) continue;
+    if (e.bones && e.bones.Spine2) e.bones.Spine2.getWorldPosition(_pa); else _pa.set(e.pos.x, e.pos.y + 1.3, e.pos.z);
+    _pb.copy(_pa).project(camera); if (_pb.z > 1) continue;
+    const d = Math.hypot(_pb.x * camera.aspect, _pb.y); if (d < bd) { bd = d; best = { x: _pb.x, y: _pb.y, d, w: _pa.clone() }; }
+  }
+  if (best && !los(camera.position, best.w)) return null;
+  return best;
+}
+function padFocusables(){
+  return [...document.querySelectorAll('#sheet button, #sheet input')].filter(el => el.offsetParent !== null && !el.disabled && !el.closest('[hidden]'));
+}
+function padSetFocus(el){
+  if (PAD.focus) PAD.focus.classList.remove('padFocus');
+  PAD.focus = el; if (el) { el.classList.add('padFocus'); try { el.focus({ preventScroll: false }); } catch (e) {} el.scrollIntoView && el.scrollIntoView({ block: 'nearest' }); }
+}
+function padMenu(gp, pressed, dt){
+  const list = padFocusables(); if (!list.length) return;
+  if (!PAD.focus || !list.includes(PAD.focus)) padSetFocus(list[0]);
+  const ax = gp.axes[0] || 0, ay = gp.axes[1] || 0;
+  const up = pressed(12) || (ay < -0.6 && PAD.navT <= 0), down = pressed(13) || (ay > 0.6 && PAD.navT <= 0);
+  const left = pressed(14) || (ax < -0.6 && PAD.navT <= 0), right = pressed(15) || (ax > 0.6 && PAD.navT <= 0);
+  PAD.navT -= dt; if (Math.abs(ax) > 0.6 || Math.abs(ay) > 0.6) { if (PAD.navT <= 0) PAD.navT = 0.22; } else PAD.navT = 0;
+  const f = PAD.focus, i = list.indexOf(f);
+  if (f && f.type === 'range' && (left || right)) {
+    const st = +f.step || 1; f.value = clamp(+f.value + (right ? st : -st) * (f.max - f.min > 10 ? 2 : 1), +f.min, +f.max); f.dispatchEvent(new Event('input', { bubbles: true }));
+  } else if (up || left) padSetFocus(list[(i - 1 + list.length) % list.length]);
+  else if (down || right) padSetFocus(list[(i + 1) % list.length]);
+  if (pressed(0) && f) { if (f.type === 'checkbox') { f.checked = !f.checked; f.dispatchEvent(new Event('input', { bubbles: true })); } else if (f.tagName === 'BUTTON') f.click(); }
+  if (pressed(1)) { const back = ['dBack', 'setBack'].map($).find(b => b && b.offsetParent !== null); if (back) back.click(); else if (state === 'paused') $('resume').click(); }
+  if (pressed(9) && state === 'paused') $('resume').click();
+}
+const PAD_HOLD = { 0: 'Space', 1: 'KeyC' };
+const PAD_TAP = { 2: 'KeyR', 4: 'KeyG', 5: 'KeyV', 8: 'KeyN', 11: 'KeyK', 12: 'KeyF', 13: 'KeyL', 14: 'KeyT', 15: 'KeyB' };
+let padLastFrame = performance.now();
+function padLoop(){
+  requestAnimationFrame(padLoop);
+  const now = performance.now(), dt = Math.min((now - padLastFrame) / 1000, 0.05); padLastFrame = now;
+  const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+  let gp = null; for (const g of pads) if (g && g.connected) { gp = g; break; }
+  if (!gp) { if (PAD.active) { PAD.active = false; for (const c of Object.values(PAD_HOLD)) if (keys[c]) padKey(c, false); } return; }
+  const btn = i => { const b = gp.buttons[i]; return !!b && (b.pressed || b.value > 0.4); };
+  const cur = gp.buttons.map((b, i) => btn(i));
+  const pressed = i => cur[i] && !PAD.prev[i];
+  const any = cur.some(Boolean) || gp.axes.some(a => Math.abs(a) > 0.3);
+  if (any) { PAD.lastT = now; if (!PAD.active) { PAD.active = true; feed('<b>Controller</b> connected<span>' + (gp.id.split('(')[0].trim().slice(0, 28) || 'gamepad') + '</span>'); } }
+  if (DUEL && DUEL.typing) { PAD.prev = cur; return; }
+  if (state !== 'playing') {
+    // menus and pause: move with the d-pad or stick, ✕ select, ○ back
+    for (const [i, c] of Object.entries(PAD_HOLD)) if (PAD.prev[i]) padKey(c, false);
+    if (PAD.mv) { for (const [c, on] of Object.entries(PAD.mv)) if (on) padKey(c, false); PAD.mv = null; }
+    if (PAD.sprint) { PAD.sprint = false; padKey('ShiftLeft', false); }
+    if (PAD.active && (state === 'menu' || state === 'paused' || state === 'dead')) padMenu(gp, pressed, dt);
+    PAD.prev = cur; return;
+  }
+  if (PAD.focus) { PAD.focus.classList.remove('padFocus'); PAD.focus = null; }
+  // held buttons map onto the keyboard keys the game already reads
+  for (const [i, code] of Object.entries(PAD_HOLD)) { if (cur[i] && !PAD.prev[i]) padKey(code, true); else if (!cur[i] && PAD.prev[i]) padKey(code, false); }
+  // L3 starts a sprint that lasts while the left stick stays pushed forward
+  const wasSprint = !!PAD.sprint;
+  if (pressed(10)) PAD.sprint = !PAD.sprint;
+  if ((gp.axes[1] || 0) > -0.4) PAD.sprint = false;
+  if (PAD.sprint !== wasSprint) padKey('ShiftLeft', PAD.sprint);
+  for (const [i, code] of Object.entries(PAD_TAP)) if (pressed(+i)) { padKey(code, true); padKey(code, false); }
+  if (pressed(3)) { const owned = WEAPONS.map((w, i) => w.owned ? i : -1).filter(i => i >= 0); const k = owned.indexOf(WEAPONS.indexOf(WPN)); setWeapon(owned[(k + 1) % owned.length]); }
+  if (pressed(9)) { pause(); PAD.prev = cur; return; }
+  // left stick: movement (WASD)
+  const lx = gp.axes[0] || 0, ly = gp.axes[1] || 0, dz = 0.3;
+  const want = { KeyW: ly < -dz, KeyS: ly > dz, KeyA: lx < -dz, KeyD: lx > dz }, had = PAD.mv || {};
+  for (const [c, on] of Object.entries(want)) if (on !== !!had[c]) padKey(c, on);
+  PAD.mv = want;
+  // triggers: fire and aim
+  const fire = btn(7), aim = btn(6);
+  if (fire && !PAD.prev[7]) { mouseL = true; semiQ = true; } else if (!fire && PAD.prev[7]) mouseL = false;
+  if (aim && !PAD.prev[6]) mouseR = true; else if (!aim && PAD.prev[6]) mouseR = false;
+  // right stick: look, with a response curve, sensitivity, aim slow-down and a gentle pull when you aim in
+  let rx = gp.axes[2] || 0, ry = gp.axes[3] || 0; const mag = Math.hypot(rx, ry), rdz = 0.1;
+  if (mag < rdz) { rx = 0; ry = 0; } else { const k = Math.pow((mag - rdz) / (1 - rdz), 1.8) / mag; rx *= k; ry *= k; }
+  const zoomK = P.ads > 0.5 ? clamp(camera.fov / 72, 0.12, 1) : 1;
+  let rate = 3.4 * SET.sens * zoomK * (1 - 0.35 * P.ads);
+  const tgt = padTarget(P.ads > 0.5 ? 0.22 : 0.09);
+  if (tgt && tgt.d < (P.ads > 0.5 ? 0.12 : 0.07)) rate *= 0.55;
+  if (aim && !PAD.prev[6]) PAD.snapT = 0.22;
+  if (tgt && (PAD.snapT > 0 || (P.ads > 0.5 && mag > rdz))) {
+    const hf = Math.atan(Math.tan(camera.fov * Math.PI / 360) * camera.aspect), vf = camera.fov * Math.PI / 360, pull = PAD.snapT > 0 ? 9 : 2.2;
+    P.yaw -= tgt.x * hf * Math.min(1, pull * dt); P.pitch += tgt.y * vf * Math.min(1, pull * dt);
+  }
+  PAD.snapT -= dt;
+  P.yaw -= rx * rate * dt; P.pitch -= ry * rate * dt * (SET.inv ? -1 : 1);
+  P.swayX = clamp((P.swayX || 0) + rx * 0.6 * dt * 60 * 0.02, -1.5, 1.5); P.swayY = clamp((P.swayY || 0) + ry * 0.6 * dt * 60 * 0.02, -1.5, 1.5);
+  // rumble: shots and damage
+  PAD.rumbleT -= dt;
+  if (P.shots > PAD.shots && PAD.rumbleT <= 0) { PAD.rumbleT = 0.06; padRumble(gp, WPN.id === 'rpg' || WPN.id === 'sniper50' ? 0.9 : 0.15, WPN.id === 'rpg' || WPN.id === 'sniper50' ? 0.6 : 0.35, WPN.id === 'rpg' || WPN.id === 'sniper50' ? 220 : 45); }
+  PAD.shots = P.shots;
+  if (P.hp < PAD.hp - 0.5) padRumble(gp, clamp((PAD.hp - P.hp) / 40, 0.3, 1), 0.5, 180);
+  PAD.hp = P.hp;
+  PAD.prev = cur;
+}
+requestAnimationFrame(padLoop);
+// no mouse capture needed when playing on a controller
+{ const e0 = enterPlay; enterPlay = fresh => {
+  if (PAD.active && performance.now() - PAD.lastT < 20000) { initAudio(); ['lockNote', 'lockNote2', 'lockNote3'].forEach(i => $(i).textContent = ''); if (fresh) resetGame(); beginPlaying(); return; }
+  e0(fresh);
+}; }
+addEventListener('gamepadconnected', () => { PAD.lastT = performance.now(); });
+
 window.__WO = { setPose(x, z, yaw, pitch){ P.pos.set(x, heightAt(x, z), z); P.yaw = yaw; P.pitch = pitch; }, spawn(n){ for (let i = 0; i < n; i++) spawnEnemy(); }, enemies, P, get state(){ return state; }, info(){ return renderer.info.render; }, GRIP, feat(){ return { raycaster, enemyParts, coverMeshes, rayTerrain, NIGHT, setNightTarget, FL, AXE, throwAxe, FIRE, NET, TH, WS, cycleThermal, FUN, barrels, damageBarrel, loot, get keys(){ return keys; }, heightAt, get trailCount(){ return trailMesh.count; }, rockets, ragImpulse, RI, spawnSled, spawnHeli, HELI, VEH, vehDamage, SM, fellTree, trees, KC, fallen, startKillCam, smToggle, get lastKill(){ return lastKill; }, startWave, WEAPONS, setWeapon, spawnCrate, explode, applyWeaponLook, setBz(v){ bz = bzTarget = v; }, setWave(n){ wave = n; } }; }, fpInfo(){ return fp ? { tris: fp.tris, ms: fp.ms } : null; }, gun, kill(i, part){ const e = enemies[i]; if (!e) return; const at = V(); e.bones[part === 'head' ? 'Head' : part === 'leg' ? 'LeftLeg' : 'Spine2'].getWorldPosition(at); const dir = at.clone().sub(camera.position).normalize(); e.hp = 1; hitEnemy(e, part, at.distanceTo(camera.position), dir, at); }, step(n, d){ for (let i = 0; i < n; i++) loop(d || 0.033); } };
 loop();
 })();
